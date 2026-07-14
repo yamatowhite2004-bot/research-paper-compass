@@ -1,0 +1,1407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
+<title>Research Compass</title>
+<style>
+/* ============================================================
+   Research Compass
+   植物細胞の核・細胞質温度差研究のための論文検索アプリ
+   単一HTMLファイル（HTML / CSS / JavaScript 完結型）
+   ============================================================ */
+
+:root{
+  /* --- カラートークン ---
+     研究対象（植物細胞内の核と細胞質の温度差）から着想したパレット。
+     深いモス/フォレストグリーンを基調に、温度差を示す暖色(琥珀)を
+     Sランクなど「注目させたい要素」だけに使う。 */
+  --bg: #F6F7F3;
+  --surface: #FFFFFF;
+  --surface-2: #EFF2EA;
+  --border: #DCE2D6;
+  --text: #1E2A20;
+  --text-muted: #5C6B5E;
+  --accent: #3C6E4F;
+  --accent-dark: #274A36;
+  --accent-soft: #E4EEE6;
+  --warm: #C77B3A;
+  --warm-soft: #F7E9D9;
+  --rank-s-1: #C0392B;
+  --rank-s-2: #E6A23C;
+  --rank-a: #3C6E4F;
+  --rank-b: #6E7F8A;
+  --rank-c: #9AA39B;
+  --danger: #B23A3A;
+  --shadow: 0 2px 10px rgba(30,42,32,0.08);
+  --shadow-lg: 0 8px 28px rgba(30,42,32,0.14);
+  --radius: 14px;
+  --radius-sm: 9px;
+  --nav-h: 68px;
+  --font-display: "Shippori Mincho", "Hiragino Mincho ProN", serif;
+  --font-body: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+
+[data-theme="dark"]{
+  --bg: #12160F;
+  --surface: #1B211A;
+  --surface-2: #202822;
+  --border: #303B2E;
+  --text: #EAF0E6;
+  --text-muted: #9AAB9C;
+  --accent: #6FA383;
+  --accent-dark: #8FBF9F;
+  --accent-soft: #223328;
+  --warm: #E0975A;
+  --warm-soft: #3A2E1E;
+  --rank-a: #6FA383;
+  --rank-b: #8B99A2;
+  --rank-c: #6E796F;
+  --shadow: 0 2px 10px rgba(0,0,0,0.35);
+  --shadow-lg: 0 8px 28px rgba(0,0,0,0.45);
+}
+
+*{ box-sizing: border-box; }
+html, body{
+  margin:0; padding:0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+body{ padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 12px); }
+h1,h2,h3{ font-family: var(--font-display); font-weight: 700; letter-spacing:.02em; margin: 0 0 8px; color: var(--text); }
+button{ font-family: inherit; }
+a{ color: var(--accent-dark); }
+input, select, textarea{ font-family: inherit; font-size: 16px; }
+
+/* --- ヘッダー --- */
+.app-header{
+  position: sticky; top:0; z-index: 20;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 18px;
+  display:flex; align-items:center; gap:12px;
+}
+.logo-mark{
+  width:36px; height:36px; border-radius:50%; flex-shrink:0;
+  background: radial-gradient(circle at 38% 38%, var(--rank-s-2) 0%, var(--warm) 32%, var(--accent) 68%, var(--accent-dark) 100%);
+  box-shadow: inset 0 0 6px rgba(0,0,0,0.25);
+}
+@media (prefers-reduced-motion: no-preference){
+  .logo-mark{ animation: pulse 5s ease-in-out infinite; }
+}
+@keyframes pulse{ 0%,100%{ transform: scale(1); } 50%{ transform: scale(1.06); } }
+.app-header h1{ font-size: 1.15rem; margin:0; }
+.app-header .sub{ font-size:.72rem; color: var(--text-muted); margin-top:2px; }
+
+/* --- メインコンテナ・ページ --- */
+.page{ display:none; padding: 16px; max-width: 980px; margin: 0 auto; }
+.page.active{ display:block; }
+
+.section-title{ font-size:1rem; margin: 22px 0 10px; color: var(--accent-dark); display:flex; align-items:center; gap:8px; }
+.section-title:first-child{ margin-top:4px; }
+
+/* --- カード共通 --- */
+.card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.card p{ margin: 4px 0; }
+
+/* --- イントロ／プロンプトカード --- */
+.intro-card{ background: var(--accent-soft); border-color: var(--accent); }
+.intro-card h3{ color: var(--accent-dark); }
+.prompt-card{ background: var(--warm-soft); border-color: var(--warm); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.empty-state{ text-align:center; color: var(--text-muted); padding: 28px 12px; }
+.empty-state .big{ font-size:2rem; display:block; margin-bottom:6px; }
+
+/* --- ボタン --- */
+.btn{
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: .92rem;
+  font-weight: 600;
+  cursor:pointer;
+  min-height: 44px;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  transition: transform .08s ease, background .15s ease;
+}
+.btn:active{ transform: scale(.96); }
+.btn-primary{ background: var(--accent); border-color: var(--accent); color:#fff; }
+.btn-warm{ background: var(--warm); border-color: var(--warm); color:#fff; }
+.btn-danger{ background: var(--danger); border-color: var(--danger); color:#fff; }
+.btn-ghost{ background: transparent; }
+.btn-block{ width:100%; }
+.btn-sm{ padding: 8px 12px; font-size:.82rem; min-height:38px; }
+.btn:disabled{ opacity:.45; cursor:not-allowed; }
+.icon-btn{
+  width:44px; height:44px; border-radius:50%; border:1px solid var(--border);
+  background: var(--surface); display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; flex-shrink:0;
+}
+.icon-btn.active{ background: var(--warm-soft); border-color: var(--warm); color: var(--warm); }
+.icon-btn svg{ width:20px; height:20px; }
+
+/* --- フォーム --- */
+.field{ margin-bottom: 16px; }
+.field label{ display:block; font-size:.85rem; font-weight:700; color: var(--accent-dark); margin-bottom:6px; }
+.field .hint{ font-size:.75rem; color: var(--text-muted); margin-top:4px; }
+.field input[type="text"], .field input[type="number"], .field input[type="date"],
+.field select, .field textarea{
+  width:100%; border:1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 11px 12px; background: var(--surface); color: var(--text);
+}
+.field textarea{ resize: vertical; min-height: 90px; line-height:1.55; }
+.field input:focus, .field select:focus, .field textarea:focus{
+  outline: 2px solid var(--accent); outline-offset:1px;
+}
+.row{ display:flex; gap:10px; flex-wrap:wrap; }
+.row > *{ flex:1; min-width: 140px; }
+.check-row{ display:flex; align-items:center; gap:8px; }
+.check-row input{ width:20px; height:20px; }
+.chip-toggle{
+  display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--border); border-radius:999px; padding:8px 14px;
+  cursor:pointer; background:var(--surface); font-size:.85rem; user-select:none;
+}
+.chip-toggle input{ display:none; }
+.chip-toggle.checked{ background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); font-weight:700; }
+
+/* --- 論文カード --- */
+.paper-grid{ display:grid; grid-template-columns: 1fr; gap:12px; }
+@media (min-width: 720px){ .paper-grid{ grid-template-columns: 1fr 1fr; } }
+.paper-card{
+  background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow); position:relative;
+}
+.paper-card.rank-S{ border: 2px solid var(--rank-s-2); box-shadow: 0 4px 18px rgba(230,162,60,0.28); }
+.rank-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:34px; height:28px; border-radius:8px; font-weight:800; font-size:.85rem;
+  color:#fff; padding:0 8px;
+}
+.rank-badge.rank-S{ background: linear-gradient(135deg, var(--rank-s-2), var(--rank-s-1)); }
+.rank-badge.rank-A{ background: var(--rank-a); }
+.rank-badge.rank-B{ background: var(--rank-b); }
+.rank-badge.rank-C{ background: var(--rank-c); }
+.paper-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.paper-score{ font-size:.8rem; color: var(--text-muted); }
+.paper-score b{ font-size:1.05rem; color: var(--text); }
+.paper-title-en{ font-size:1rem; font-weight:700; margin: 2px 0; }
+.paper-title-ja{ font-size:.82rem; color: var(--text-muted); margin-bottom:6px; }
+.paper-meta{ font-size:.8rem; color: var(--text-muted); margin: 2px 0; }
+.paper-reasons{ font-size:.76rem; color: var(--accent-dark); background: var(--accent-soft); border-radius:8px; padding:6px 10px; margin: 8px 0; }
+.oa-badge{ display:inline-block; font-size:.7rem; padding:2px 8px; border-radius:999px; background: var(--accent-soft); color: var(--accent-dark); font-weight:700; margin-left:6px; }
+.paper-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.paper-actions .btn{ flex:1; min-width: 100px; }
+
+/* --- ローディング / エラー --- */
+.loader{ display:flex; align-items:center; gap:10px; color: var(--text-muted); padding: 20px 0; justify-content:center; }
+.spinner{ width:22px; height:22px; border-radius:50%; border:3px solid var(--border); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin{ to{ transform: rotate(360deg); } }
+.error-box{ background:#F8E5E1; color: var(--danger); border:1px solid var(--danger); border-radius: var(--radius-sm); padding: 12px 14px; margin: 12px 0; font-size:.88rem; }
+[data-theme="dark"] .error-box{ background: #3A2222; }
+
+/* --- 下部固定ナビ --- */
+.bottom-nav{
+  position: fixed; left:0; right:0; bottom:0; z-index: 30;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display:flex;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
+}
+.nav-btn{
+  flex:1; background:none; border:none; padding: 9px 4px 8px; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  color: var(--text-muted); min-height: 56px;
+}
+.nav-btn svg{ width:22px; height:22px; }
+.nav-btn span{ font-size:.68rem; font-weight:600; }
+.nav-btn.active{ color: var(--accent-dark); }
+
+/* --- 詳細オーバーレイ --- */
+.overlay{
+  position: fixed; inset:0; background: var(--bg); z-index: 50;
+  display:none; overflow-y:auto; -webkit-overflow-scrolling: touch;
+}
+.overlay.active{ display:block; }
+.overlay-header{
+  position: sticky; top:0; background: var(--surface); border-bottom:1px solid var(--border);
+  padding: 12px 14px; display:flex; align-items:center; gap:10px; z-index:2;
+}
+.overlay-body{ padding: 16px; max-width: 900px; margin:0 auto; }
+.score-bars{ display:flex; flex-direction:column; gap:8px; }
+.score-bar-row{ font-size:.8rem; }
+.score-bar-label{ display:flex; justify-content:space-between; margin-bottom:3px; color: var(--text-muted); }
+.score-bar-bg{ background: var(--surface-2); border-radius:6px; height:8px; overflow:hidden; }
+.score-bar-fill{ height:100%; background: var(--accent); border-radius:6px; }
+
+/* --- トースト --- */
+.toast{
+  position: fixed; left:50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px);
+  transform: translateX(-50%) translateY(20px);
+  background: var(--accent-dark); color:#fff; padding: 10px 18px; border-radius:999px;
+  font-size:.85rem; opacity:0; pointer-events:none; transition: all .25s ease; z-index: 60; max-width: 90%; text-align:center;
+}
+.toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+/* --- 確認ダイアログ --- */
+.dialog-backdrop{ position: fixed; inset:0; background: rgba(20,25,18,0.45); display:none; align-items:center; justify-content:center; z-index: 70; padding: 20px; }
+.dialog-backdrop.active{ display:flex; }
+.dialog-box{ background: var(--surface); border-radius: var(--radius); padding: 20px; max-width: 340px; width:100%; box-shadow: var(--shadow-lg); }
+.dialog-box p{ font-size:.92rem; color: var(--text-muted); }
+.dialog-actions{ display:flex; gap:10px; margin-top: 16px; }
+.dialog-actions .btn{ flex:1; }
+
+/* --- 設定画面のスライダー --- */
+.weight-row{ margin-bottom:16px; }
+.weight-row .val{ font-weight:700; color: var(--accent-dark); }
+input[type="range"]{ width:100%; accent-color: var(--accent); }
+
+.tag-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+
+@media (min-width: 900px){
+  .page{ padding: 24px 32px; }
+  .row-ipad{ display:flex; gap:20px; }
+  .row-ipad > *{ flex:1; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="logo-mark" aria-hidden="true"></div>
+  <div>
+    <h1>Research Compass</h1>
+    <div class="sub">植物細胞 核・細胞質温度差 研究支援</div>
+  </div>
+</header>
+
+<!-- ============ ホーム画面 ============ -->
+<div class="page active" id="page-home">
+
+  <div class="card intro-card" id="home-intro-card" style="display:none;">
+    <h3>ようこそ Research Compass へ</h3>
+    <p>このアプリは、あなたの研究プロフィールに基づいて論文を検索し、関連度をS・A・Bランクで自動評価します。</p>
+    <p>まずは「研究プロフィール」タブで概要とキーワードを確認・編集し、「論文検索」タブでキーワードを入力して検索してください。</p>
+    <button class="btn btn-primary" onclick="closeIntroCard()">はじめる</button>
+  </div>
+
+  <div class="card prompt-card" id="home-profile-prompt" style="display:none;">
+    <div>
+      <strong>研究プロフィールが未入力です</strong>
+      <p style="margin:4px 0 0;">研究概要とキーワードを登録すると、論文の関連度を正しく評価できます。</p>
+    </div>
+    <button class="btn btn-warm" onclick="showPage('profile')">登録する</button>
+  </div>
+
+  <h2 class="section-title">⭐ おすすめ論文</h2>
+  <div id="home-recommended"></div>
+
+  <h2 class="section-title">🆕 新着論文</h2>
+  <div id="home-new"></div>
+
+  <h2 class="section-title">📌 最近保存した論文</h2>
+  <div id="home-recent-saved"></div>
+
+</div>
+
+<!-- ============ 論文検索画面 ============ -->
+<div class="page" id="page-search">
+  <h2 class="section-title">論文検索</h2>
+
+  <div class="card">
+    <div class="field">
+      <label for="search-keyword">検索キーワード</label>
+      <input type="text" id="search-keyword" placeholder="例: intracellular temperature plant cell">
+      <div class="hint">スペース区切りで複数語を指定できます（OpenAlexの全文検索）</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="search-date-from">期間（開始）</label>
+        <input type="date" id="search-date-from">
+      </div>
+      <div class="field">
+        <label for="search-date-to">期間（終了）</label>
+        <input type="date" id="search-date-to">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="search-sort">並び順</label>
+        <select id="search-sort">
+          <option value="relevance">関連度順</option>
+          <option value="newest">最新順</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="search-count">検索件数</label>
+        <select id="search-count">
+          <option value="10">10件</option>
+          <option value="20" selected>20件</option>
+          <option value="50">50件</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="check-row" style="margin-bottom:14px;">
+      <input type="checkbox" id="search-oa-only">
+      <label for="search-oa-only" style="margin:0;">オープンアクセスのみ表示</label>
+    </div>
+
+    <button class="btn btn-primary btn-block" onclick="runSearch()">検索する</button>
+  </div>
+
+  <div class="loader" id="search-loading" style="display:none;">
+    <div class="spinner"></div><span>OpenAlexから論文を取得しています…</span>
+  </div>
+
+  <div class="error-box" id="search-error" style="display:none;"></div>
+
+  <div id="search-results" class="paper-grid"></div>
+</div>
+
+<!-- ============ お気に入り画面 ============ -->
+<div class="page" id="page-favorites">
+  <h2 class="section-title">お気に入り</h2>
+
+  <div class="card">
+    <div class="tag-row" id="fav-rank-filters">
+      <label class="chip-toggle"><input type="checkbox" value="S" checked onchange="renderFavorites()">Sランク</label>
+      <label class="chip-toggle"><input type="checkbox" value="A" checked onchange="renderFavorites()">Aランク</label>
+      <label class="chip-toggle"><input type="checkbox" value="B" checked onchange="renderFavorites()">Bランク</label>
+      <label class="chip-toggle"><input type="checkbox" value="C" checked onchange="renderFavorites()">Cランク</label>
+    </div>
+    <div class="field" style="margin-bottom:0;">
+      <label for="fav-read-filter">既読状態</label>
+      <select id="fav-read-filter" onchange="renderFavorites()">
+        <option value="all">すべて</option>
+        <option value="unread">未読のみ</option>
+        <option value="read">既読のみ</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="favorites-list" class="paper-grid"></div>
+</div>
+
+<!-- ============ 研究プロフィール画面 ============ -->
+<div class="page" id="page-profile">
+  <h2 class="section-title">研究プロフィール</h2>
+  <p style="color:var(--text-muted); font-size:.85rem; margin-top:-4px;">ここで登録した内容が論文の関連度スコア計算に使われます。</p>
+
+  <div class="card">
+    <div class="field">
+      <label for="profile-title">研究タイトル</label>
+      <input type="text" id="profile-title">
+    </div>
+    <div class="field">
+      <label for="profile-overview">研究概要</label>
+      <textarea id="profile-overview" rows="6"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-hypothesis">現在の仮説</label>
+      <textarea id="profile-hypothesis" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-methods">使用している実験手法</label>
+      <textarea id="profile-methods" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-future">今後行いたい実験</label>
+      <textarea id="profile-future" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-major-keywords">最重要キーワード（1行に1語）</label>
+      <textarea id="profile-major-keywords" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-related-keywords">関連キーワード（1行に1語）</label>
+      <textarea id="profile-related-keywords" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label for="profile-exclude-keywords">除外キーワード（1行に1語）</label>
+      <textarea id="profile-exclude-keywords" rows="3"></textarea>
+      <div class="hint">該当語を含む論文はスコアが半減して表示されます</div>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="saveProfile()">プロフィールを保存</button>
+  </div>
+</div>
+
+<!-- ============ 設定画面 ============ -->
+<div class="page" id="page-settings">
+  <h2 class="section-title">設定</h2>
+
+  <div class="card">
+    <div class="field">
+      <label for="settings-results-count">検索件数（初期値）</label>
+      <select id="settings-results-count">
+        <option value="10">10件</option>
+        <option value="20">20件</option>
+        <option value="50">50件</option>
+      </select>
+    </div>
+
+    <div class="weight-row">
+      <label>新しさの重み <span class="val" id="val-recency">1.0</span></label>
+      <input type="range" id="settings-weight-recency" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateWeightLabel('recency')">
+    </div>
+    <div class="weight-row">
+      <label>キーワード一致の重み <span class="val" id="val-keyword">1.0</span></label>
+      <input type="range" id="settings-weight-keyword" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateWeightLabel('keyword')">
+    </div>
+    <div class="weight-row">
+      <label>引用数の重み <span class="val" id="val-citation">1.0</span></label>
+      <input type="range" id="settings-weight-citation" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateWeightLabel('citation')">
+    </div>
+
+    <div class="check-row" style="margin-bottom:6px;">
+      <input type="checkbox" id="settings-dark-mode" onchange="toggleDarkMode()">
+      <label for="settings-dark-mode" style="margin:0;">ダークモード</label>
+    </div>
+
+    <button class="btn btn-primary btn-block" onclick="saveSettings()" style="margin-top:14px;">設定を保存</button>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size:.95rem;">データ管理</h3>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="exportData()">JSON書き出し</button>
+      <button class="btn" onclick="document.getElementById('import-file-input').click()">JSON読み込み</button>
+    </div>
+    <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="importData(event)">
+    <button class="btn btn-danger btn-block" style="margin-top:12px;" onclick="confirmClearAll()">全データ削除</button>
+  </div>
+</div>
+
+<!-- ============ 論文詳細オーバーレイ ============ -->
+<div class="overlay" id="detail-overlay">
+  <div class="overlay-header">
+    <button class="icon-btn" onclick="closeDetail()" aria-label="閉じる">✕</button>
+    <strong>論文詳細</strong>
+  </div>
+  <div class="overlay-body" id="detail-body"></div>
+</div>
+
+<!-- ============ 確認ダイアログ ============ -->
+<div class="dialog-backdrop" id="confirm-dialog">
+  <div class="dialog-box">
+    <h3 id="confirm-title">確認</h3>
+    <p id="confirm-message"></p>
+    <div class="dialog-actions">
+      <button class="btn" onclick="closeConfirmDialog()">キャンセル</button>
+      <button class="btn btn-danger" id="confirm-ok-btn">実行する</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ============ 下部固定ナビゲーション ============ -->
+<nav class="bottom-nav">
+  <button class="nav-btn active" data-page="home" onclick="showPage('home')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    <span>ホーム</span>
+  </button>
+  <button class="nav-btn" data-page="search" onclick="showPage('search')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.6" y2="16.6"/></svg>
+    <span>論文検索</span>
+  </button>
+  <button class="nav-btn" data-page="favorites" onclick="showPage('favorites')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.3l-5.6 3 1.1-6.2L3 9.6l6.3-.9L12 3l2.7 5.7 6.3.9-4.5 4.5 1.1 6.2z"/></svg>
+    <span>お気に入り</span>
+  </button>
+  <button class="nav-btn" data-page="profile" onclick="showPage('profile')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+    <span>プロフィール</span>
+  </button>
+  <button class="nav-btn" data-page="settings" onclick="showPage('settings')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 112.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z"/></svg>
+    <span>設定</span>
+  </button>
+</nav>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   1. 定数・状態管理
+   ============================================================ */
+
+// localStorage キー一覧
+const LS_KEYS = {
+  profile: 'rc_profile',
+  favorites: 'rc_favorites',
+  settings: 'rc_settings',
+  lastResults: 'rc_lastResults',
+  firstRun: 'rc_firstRun'
+};
+
+// 研究プロフィールの初期値（ユーザー提供のデフォルト）
+const DEFAULT_PROFILE = {
+  title: '植物培養細胞における核と細胞質の温度差の定量解析',
+  overview: '植物培養細胞BY-2を対象に、核と細胞質の温度差を蛍光温度プローブによって定量している。植物細胞では、核が細胞質より高温となる細胞と温度差が小さい細胞が存在し、温度差の分布に二峰性が確認された。現在は、細胞周期、液胞、ミトコンドリアの熱産生、細胞内構造が温度差に与える影響を検証している。',
+  hypothesis: '細胞周期によって核と細胞質の温度差が変化する。\n液胞の大きさや配置が細胞内の熱拡散に影響する。\nミトコンドリアの熱産生が核周辺の温度に影響する。\n植物細胞特有の構造が温度分布の二峰性を生み出す。',
+  methods: 'BY-2植物培養細胞\nHeLa細胞\n蛍光温度プローブ\n共焦点顕微鏡\n蛍光寿命イメージング\n細胞周期同調\n蛍光画像解析\nTrackMate\n統計解析',
+  future: 'G1/S期とG2期の温度差比較\nCCCP処理によるミトコンドリア機能阻害\n液胞の影響の検証\nサリチル酸処理による温度変化の解析\nAOX経路と熱産生の関係の検証',
+  majorKeywords: 'intracellular temperature\nintracellular thermometry\nnuclear temperature\ncytoplasmic temperature\nfluorescent temperature probe\nplant cell temperature\nBY-2 cells',
+  relatedKeywords: 'cell cycle temperature\nmitochondrial heat production\nvacuole heat transfer\nsubcellular temperature gradient\nfluorescence lifetime imaging thermometry\nsalicylic acid thermogenesis\nalternative oxidase thermogenesis',
+  excludeKeywords: ''
+};
+
+const DEFAULT_SETTINGS = {
+  resultsPerPage: 20,
+  weightRecency: 1.0,
+  weightKeyword: 1.0,
+  weightCitation: 1.0,
+  darkMode: false
+};
+
+// 日本語⇔英語の概念対応辞書。AI APIを使わず簡易的に関連度を推定するために使用。
+// 各グループは「研究プロフィールの日本語表現」と「論文本文(英語)での表現」を対応付ける。
+const DOMAIN_CONCEPTS = [
+  { group:'nucleus',      label:'核',           ja:['核内','核と','核が','核の','核（'], en:['nucleus','nuclear'] },
+  { group:'cytoplasm',    label:'細胞質',        ja:['細胞質'], en:['cytoplasm','cytoplasmic'] },
+  { group:'organelle',    label:'小器官',        ja:['小器官','細胞内構造'], en:['organelle'] },
+  { group:'mitochondria', label:'ミトコンドリア', ja:['ミトコンドリア','熱産生'], en:['mitochondria','mitochondrial','thermogenesis','heat production'] },
+  { group:'vacuole',      label:'液胞',          ja:['液胞'], en:['vacuole'] },
+  { group:'plant',        label:'植物細胞',      ja:['植物','培養細胞','BY-2','by-2'], en:['plant cell','plant cells','by-2','tobacco cell','tobacco cells'] },
+  { group:'temperature',  label:'温度',          ja:['温度','温度差','温度プローブ','蛍光温度'], en:['temperature','thermometry','thermal'] },
+  { group:'fluorescence', label:'蛍光',          ja:['蛍光','蛍光寿命'], en:['fluorescence','fluorescent','fluorescence lifetime'] },
+  { group:'cellcycle',    label:'細胞周期',      ja:['細胞周期','g1','g2','同調'], en:['cell cycle','g1 phase','g2 phase','synchron'] },
+  { group:'microscopy',   label:'顕微鏡観察',    ja:['共焦点顕微鏡','顕微鏡'], en:['confocal','microscopy','microscope'] },
+  { group:'imageanalysis',label:'画像・統計解析', ja:['画像解析','trackmate','統計解析'], en:['image analysis','trackmate','statistical analysis','tracking'] },
+  { group:'salicylic',    label:'サリチル酸',    ja:['サリチル酸'], en:['salicylic acid'] },
+  { group:'aox',          label:'AOX経路',       ja:['aox','交代酸化酵素'], en:['alternative oxidase','aox'] },
+  { group:'cccp',         label:'阻害処理',      ja:['cccp','阻害'], en:['cccp','uncoupler','inhibition','inhibitor'] },
+  { group:'bimodal',      label:'二峰性分布',    ja:['二峰性','分布'], en:['bimodal','distribution'] }
+];
+
+let state = {
+  currentPage: 'home',
+  profile: null,
+  settings: null,
+  favorites: [],
+  lastResults: null, // { params:{...}, papers:[...], timestamp }
+  currentDetailPaper: null,
+  currentDetailSource: null // 'result' | 'favorite'
+};
+
+/* ============================================================
+   2. localStorage 読み書きユーティリティ
+   ============================================================ */
+
+function loadJSON(key, fallback){
+  try{
+    const raw = localStorage.getItem(key);
+    if(!raw) return fallback;
+    return JSON.parse(raw);
+  }catch(e){
+    console.error('localStorageの読み込みに失敗しました:', key, e);
+    return fallback;
+  }
+}
+function saveJSON(key, value){
+  try{
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  }catch(e){
+    console.error('localStorageへの保存に失敗しました:', key, e);
+    showToast('保存に失敗しました（容量不足の可能性があります）');
+    return false;
+  }
+}
+
+function initState(){
+  state.profile = loadJSON(LS_KEYS.profile, null) || Object.assign({}, DEFAULT_PROFILE);
+  state.settings = Object.assign({}, DEFAULT_SETTINGS, loadJSON(LS_KEYS.settings, {}));
+  state.favorites = loadJSON(LS_KEYS.favorites, []);
+  state.lastResults = loadJSON(LS_KEYS.lastResults, null);
+  if(!loadJSON(LS_KEYS.profile, null)){
+    saveJSON(LS_KEYS.profile, state.profile); // 初回起動時にデフォルト値を保存
+  }
+}
+
+/* ============================================================
+   3. OpenAlex API 連携
+   ============================================================ */
+
+// OpenAlexのabstract_inverted_index（単語ごとの出現位置リスト）を
+// 通常の文章に復元する関数
+function restoreAbstract(invertedIndex){
+  if(!invertedIndex || typeof invertedIndex !== 'object') return '';
+  let maxPos = -1;
+  for(const word in invertedIndex){
+    const positions = invertedIndex[word];
+    if(Array.isArray(positions)){
+      positions.forEach(p=>{ if(p > maxPos) maxPos = p; });
+    }
+  }
+  if(maxPos < 0) return '';
+  const wordsArr = new Array(maxPos + 1).fill('');
+  for(const word in invertedIndex){
+    const positions = invertedIndex[word];
+    if(Array.isArray(positions)){
+      positions.forEach(p=>{ wordsArr[p] = word; });
+    }
+  }
+  return wordsArr.join(' ').replace(/\s+/g,' ').trim();
+}
+
+// OpenAlexのレスポンス1件を、アプリ内で扱う論文オブジェクトに正規化する
+function normalizePaper(work){
+  let authors = [];
+  try{
+    if(Array.isArray(work.authorships)){
+      authors = work.authorships
+        .map(a => a && a.author && a.author.display_name)
+        .filter(Boolean);
+    }
+  }catch(e){ authors = []; }
+
+  let journal = '雑誌情報なし';
+  try{
+    if(work.primary_location && work.primary_location.source && work.primary_location.source.display_name){
+      journal = work.primary_location.source.display_name;
+    }
+  }catch(e){ /* そのまま既定値を使用 */ }
+
+  let doi = null;
+  try{
+    if(work.doi){ doi = work.doi.replace('https://doi.org/',''); }
+  }catch(e){ doi = null; }
+
+  let isOA = false;
+  try{ isOA = !!(work.open_access && work.open_access.is_oa); }catch(e){ isOA = false; }
+
+  return {
+    id: work.id || ('tmp_' + Math.random().toString(36).slice(2)),
+    title: work.display_name || work.title || 'タイトル不明',
+    authors: authors,
+    year: work.publication_year || null,
+    journal: journal,
+    citedBy: typeof work.cited_by_count === 'number' ? work.cited_by_count : 0,
+    doi: doi,
+    isOA: isOA,
+    abstract: restoreAbstract(work.abstract_inverted_index)
+  };
+}
+
+async function searchOpenAlex(params){
+  const base = 'https://api.openalex.org/works';
+  const q = new URLSearchParams();
+  q.set('search', params.keyword);
+  q.set('per-page', String(params.count));
+  q.set('sort', params.sort === 'newest' ? 'publication_date:desc' : 'relevance_score:desc');
+
+  const filters = [];
+  if(params.dateFrom){ filters.push('from_publication_date:' + params.dateFrom); }
+  if(params.dateTo){ filters.push('to_publication_date:' + params.dateTo); }
+  if(params.oaOnly){ filters.push('is_oa:true'); }
+  if(filters.length){ q.set('filter', filters.join(',')); }
+
+  const url = base + '?' + q.toString();
+
+  const res = await fetch(url);
+  if(!res.ok){
+    throw new Error('OpenAlex APIへの通信に失敗しました（ステータス: ' + res.status + '）');
+  }
+  const data = await res.json();
+  const results = Array.isArray(data.results) ? data.results : [];
+  return results.map(normalizePaper);
+}
+
+/* ============================================================
+   4. 重要度スコア計算（AI未使用・単語一致ベースの仮判定）
+   ============================================================ */
+
+function splitLines(text){
+  return (text || '').split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+function computeScore(paper, profile, settings){
+  const paperText = ((paper.title || '') + ' ' + (paper.abstract || '')).toLowerCase();
+  const profileText = [profile.overview, profile.hypothesis, profile.future, profile.methods].join(' ');
+
+  function profileMentions(entry){
+    return entry.ja.some(w => profileText.includes(w));
+  }
+  function paperMentions(entry){
+    return entry.en.some(w => paperText.includes(w.toLowerCase()));
+  }
+
+  // 1) 研究概要との関連性（30点）
+  //    プロフィール本文に登場する概念グループのうち、論文にも登場する割合で評価
+  const mentionedGroups = DOMAIN_CONCEPTS.filter(profileMentions);
+  const overviewMatchedGroups = mentionedGroups.filter(paperMentions);
+  const overviewScore = mentionedGroups.length > 0
+    ? (overviewMatchedGroups.length / mentionedGroups.length) * 30
+    : 0;
+
+  // 2) キーワード一致（20点）：最重要キーワードは重み1.5、関連キーワードは重み1.0
+  const majorKeywords = splitLines(profile.majorKeywords);
+  const relatedKeywords = splitLines(profile.relatedKeywords);
+  const majorMatched = majorKeywords.filter(k => paperText.includes(k.toLowerCase()));
+  const relatedMatched = relatedKeywords.filter(k => paperText.includes(k.toLowerCase()));
+  const maxPossibleKeywordWeight = majorKeywords.length * 1.5 + relatedKeywords.length * 1.0;
+  const rawKeywordWeight = majorMatched.length * 1.5 + relatedMatched.length * 1.0;
+  const keywordScore = maxPossibleKeywordWeight > 0
+    ? Math.min(20, (rawKeywordWeight / maxPossibleKeywordWeight) * 20 * settings.weightKeyword)
+    : 0;
+
+  // 除外キーワード：一致した場合は最終スコアを減点する
+  const excludeKeywords = splitLines(profile.excludeKeywords);
+  const excludeMatched = excludeKeywords.filter(k => paperText.includes(k.toLowerCase()));
+
+  // 3) 植物細胞との一致（10点）
+  const plantEntry = DOMAIN_CONCEPTS.find(e => e.group === 'plant');
+  let plantScore = 0;
+  if(paperMentions(plantEntry)) plantScore = 10;
+  else if(paperText.includes('cell')) plantScore = 3;
+
+  // 4) 核・細胞質・小器官との関連（10点）：論文自体がこれらの構造に言及しているかを評価
+  const organelleGroupNames = ['nucleus','cytoplasm','organelle','mitochondria','vacuole'];
+  const organelleMatched = DOMAIN_CONCEPTS.filter(e => organelleGroupNames.includes(e.group) && paperMentions(e));
+  const organelleScore = Math.min(10, (organelleMatched.length / 3) * 10);
+
+  // 5) 論文の新しさ（10点）：出版年が新しいほど高得点
+  const currentYear = new Date().getFullYear();
+  const age = paper.year ? Math.max(0, currentYear - paper.year) : 15;
+  const recencyRaw = Math.max(0, 10 - age * 0.7);
+  const recencyScore = Math.min(15, recencyRaw * settings.weightRecency);
+
+  // 6) 実験手法との一致（10点）
+  const methodGroupNames = ['fluorescence','microscopy','cellcycle','imageanalysis','temperature'];
+  const methodMatched = DOMAIN_CONCEPTS.filter(e => methodGroupNames.includes(e.group) && paperMentions(e));
+  const methodScore = Math.min(10, (methodMatched.length / 3) * 10);
+
+  // 7) 引用数（5点）：対数スケールで評価（引用数1000件で満点相当）
+  const citations = paper.citedBy || 0;
+  const citationRaw = Math.min(5, (Math.log10(citations + 1) / 3) * 5);
+  const citationScore = Math.min(7.5, citationRaw * settings.weightCitation);
+
+  // 8) 次の実験につながる可能性（5点）
+  const futureGroupNames = ['salicylic','aox','cccp','cellcycle','vacuole'];
+  const futureMatched = DOMAIN_CONCEPTS.filter(e => futureGroupNames.includes(e.group) && paperMentions(e));
+  const futureScore = Math.min(5, (futureMatched.length / 2) * 5);
+
+  let total = overviewScore + keywordScore + plantScore + organelleScore
+    + recencyScore + methodScore + citationScore + futureScore;
+
+  if(excludeMatched.length > 0){ total = total * 0.5; }
+  total = Math.max(0, Math.min(100, total));
+
+  let rank;
+  if(total >= 80) rank = 'S';
+  else if(total >= 65) rank = 'A';
+  else if(total >= 45) rank = 'B';
+  else rank = 'C';
+
+  const reasonSet = new Set();
+  majorMatched.forEach(k => reasonSet.add(k));
+  relatedMatched.forEach(k => reasonSet.add(k));
+  overviewMatchedGroups.forEach(g => reasonSet.add(g.label));
+  organelleMatched.forEach(g => reasonSet.add(g.label));
+  methodMatched.forEach(g => reasonSet.add(g.label));
+
+  return {
+    total: Math.round(total),
+    rank: rank,
+    breakdown: {
+      overview: Math.round(overviewScore * 10) / 10,
+      keyword: Math.round(keywordScore * 10) / 10,
+      plant: Math.round(plantScore * 10) / 10,
+      organelle: Math.round(organelleScore * 10) / 10,
+      recency: Math.round(recencyScore * 10) / 10,
+      method: Math.round(methodScore * 10) / 10,
+      citation: Math.round(citationScore * 10) / 10,
+      future: Math.round(futureScore * 10) / 10
+    },
+    reasons: Array.from(reasonSet),
+    excludeMatched: excludeMatched
+  };
+}
+
+function scorePapers(papers){
+  return papers.map(p => Object.assign({}, p, { score: computeScore(p, state.profile, state.settings) }));
+}
+
+/* ============================================================
+   5. ページ切り替え・共通UI
+   ============================================================ */
+
+function showPage(pageName){
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  const target = document.getElementById('page-' + pageName);
+  if(target) target.classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-page') === pageName);
+  });
+  state.currentPage = pageName;
+  if(pageName === 'home') renderHome();
+  if(pageName === 'favorites') renderFavorites();
+  window.scrollTo(0,0);
+}
+
+let toastTimer = null;
+function showToast(message){
+  const el = document.getElementById('toast');
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+let confirmCallback = null;
+function openConfirmDialog(title, message, onOk){
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-message').textContent = message;
+  confirmCallback = onOk;
+  document.getElementById('confirm-dialog').classList.add('active');
+}
+function closeConfirmDialog(){
+  document.getElementById('confirm-dialog').classList.remove('active');
+  confirmCallback = null;
+}
+document.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('confirm-ok-btn').addEventListener('click', function(){
+    if(typeof confirmCallback === 'function') confirmCallback();
+    closeConfirmDialog();
+  });
+});
+
+/* ============================================================
+   6. 論文カードの生成
+   ============================================================ */
+
+function escapeHTML(str){
+  return String(str == null ? '' : str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function isFavorited(paperId){
+  return state.favorites.some(f => f.id === paperId);
+}
+
+function buildPaperCard(paper, opts){
+  opts = opts || {};
+  const fav = isFavorited(paper.id);
+  const authorsText = (paper.authors && paper.authors.length)
+    ? paper.authors.slice(0,4).join('、') + (paper.authors.length > 4 ? ' 他' : '')
+    : '著者情報なし';
+  const reasons = (paper.score && paper.score.reasons && paper.score.reasons.length)
+    ? paper.score.reasons.slice(0,6).join('、')
+    : '一致要素なし';
+  const doiBtnDisabled = paper.doi ? '' : 'disabled';
+
+  // お気に入り画面用：既読/未読バッジとメモ表示（opts経由で渡す。文字列置換に頼らない）
+  const readBadgeHtml = (typeof opts.read === 'boolean')
+    ? '<span class="oa-badge" style="background:var(--surface-2); color:var(--text-muted);">' + (opts.read ? '既読' : '未読') + '</span>'
+    : '';
+  const memoHtml = opts.memo
+    ? '<div class="paper-reasons" style="background:var(--warm-soft); color:var(--text);">📝 メモ: ' + escapeHTML(opts.memo) + '</div>'
+    : '';
+
+  return '' +
+  '<div class="paper-card rank-' + paper.score.rank + '">' +
+    '<div class="paper-top">' +
+      '<span class="rank-badge rank-' + paper.score.rank + '">' + paper.score.rank + '</span>' +
+      '<span class="paper-score">総合点 <b>' + paper.score.total + '</b> / 100</span>' +
+      readBadgeHtml +
+    '</div>' +
+    '<div class="paper-title-en">' + escapeHTML(paper.title) +
+      (paper.isOA ? '<span class="oa-badge">オープンアクセス</span>' : '') +
+    '</div>' +
+    '<div class="paper-title-ja">日本語タイトル（暫定）: ' + escapeHTML(paper.title) + '</div>' +
+    '<p class="paper-meta">著者: ' + escapeHTML(authorsText) + '</p>' +
+    '<p class="paper-meta">発表年: ' + (paper.year || '不明') + ' ／ 雑誌: ' + escapeHTML(paper.journal) + ' ／ 引用数: ' + paper.citedBy + '</p>' +
+    '<div class="paper-reasons">一致理由: ' + escapeHTML(reasons) + '</div>' +
+    memoHtml +
+    '<div class="paper-actions">' +
+      '<button class="icon-btn ' + (fav ? 'active' : '') + '" onclick="toggleFavoriteFromCard(\'' + paper.id + '\', this)" aria-label="お気に入り">' + (fav ? '★' : '☆') + '</button>' +
+      '<button class="btn btn-sm" onclick="openDetailById(\'' + paper.id + '\', \'' + (opts.source || 'result') + '\')">論文詳細</button>' +
+      '<button class="btn btn-sm" ' + doiBtnDisabled + ' onclick="openDOI(\'' + escapeHTML(paper.doi || '') + '\')">DOIを開く</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function findPaperById(id, sourceHint){
+  if(sourceHint === 'favorite'){
+    const f = state.favorites.find(p => p.id === id);
+    if(f) return f;
+  }
+  if(state.lastResults && state.lastResults.papers){
+    const r = state.lastResults.papers.find(p => p.id === id);
+    if(r) return r;
+  }
+  return state.favorites.find(p => p.id === id) || null;
+}
+
+/* ============================================================
+   7. ホーム画面
+   ============================================================ */
+
+function renderHome(){
+  const introShown = loadJSON(LS_KEYS.firstRun, false);
+  document.getElementById('home-intro-card').style.display = introShown ? 'none' : 'block';
+
+  const profileEmpty = !state.profile.title || !state.profile.overview;
+  document.getElementById('home-profile-prompt').style.display = profileEmpty ? 'flex' : 'none';
+
+  const papers = (state.lastResults && state.lastResults.papers) ? state.lastResults.papers : [];
+
+  // おすすめ論文：Sランク優先、次にAランクの上位
+  const recommended = papers.slice().sort((a,b) => b.score.total - a.score.total).slice(0,6);
+  renderPaperList('home-recommended', recommended, '検索を実行すると、ここにおすすめ論文が表示されます', 'result');
+
+  // 新着論文：発表年降順
+  const newest = papers.slice().sort((a,b) => (b.year||0) - (a.year||0)).slice(0,6);
+  renderPaperList('home-new', newest, '検索を実行すると、ここに新着論文が表示されます', 'result');
+
+  // 最近保存した論文
+  const recentSaved = state.favorites.slice().sort((a,b) => (b.savedAt||0) - (a.savedAt||0)).slice(0,6);
+  renderPaperList('home-recent-saved', recentSaved, 'まだお気に入りに保存された論文がありません', 'favorite');
+}
+
+function renderPaperList(containerId, papers, emptyMessage, source){
+  const el = document.getElementById(containerId);
+  if(!papers.length){
+    el.innerHTML = '<div class="empty-state"><span class="big">📄</span>' + escapeHTML(emptyMessage) + '</div>';
+    return;
+  }
+  el.innerHTML = '<div class="paper-grid">' + papers.map(p => {
+    const opts = { source: source };
+    if(source === 'favorite'){ opts.read = !!p.read; opts.memo = p.memo; }
+    return buildPaperCard(p, opts);
+  }).join('') + '</div>';
+}
+
+function closeIntroCard(){
+  saveJSON(LS_KEYS.firstRun, true);
+  document.getElementById('home-intro-card').style.display = 'none';
+}
+
+/* ============================================================
+   8. 論文検索画面
+   ============================================================ */
+
+function populateSearchDefaults(){
+  document.getElementById('search-count').value = String(state.settings.resultsPerPage || 20);
+}
+
+async function runSearch(){
+  const keyword = document.getElementById('search-keyword').value.trim();
+  const errorBox = document.getElementById('search-error');
+  const loading = document.getElementById('search-loading');
+  const resultsEl = document.getElementById('search-results');
+
+  errorBox.style.display = 'none';
+  errorBox.textContent = '';
+
+  if(!keyword){
+    errorBox.textContent = '検索キーワードを入力してください。';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  const params = {
+    keyword: keyword,
+    dateFrom: document.getElementById('search-date-from').value || null,
+    dateTo: document.getElementById('search-date-to').value || null,
+    sort: document.getElementById('search-sort').value,
+    oaOnly: document.getElementById('search-oa-only').checked,
+    count: parseInt(document.getElementById('search-count').value, 10) || 20
+  };
+
+  loading.style.display = 'flex';
+  resultsEl.innerHTML = '';
+
+  try{
+    const rawPapers = await searchOpenAlex(params);
+    const scored = scorePapers(rawPapers);
+    state.lastResults = { params: params, papers: scored, timestamp: Date.now() };
+    saveJSON(LS_KEYS.lastResults, state.lastResults);
+
+    if(!scored.length){
+      resultsEl.innerHTML = '<div class="empty-state"><span class="big">🔍</span>該当する論文が見つかりませんでした。キーワードや条件を変えてお試しください。</div>';
+    }else{
+      const sorted = scored.slice().sort((a,b) => b.score.total - a.score.total);
+      resultsEl.innerHTML = sorted.map(p => buildPaperCard(p, {source:'result'})).join('');
+    }
+  }catch(e){
+    console.error(e);
+    errorBox.textContent = '論文の取得に失敗しました。通信環境を確認して再度お試しください。（' + (e.message || '不明なエラー') + '）';
+    errorBox.style.display = 'block';
+  }finally{
+    loading.style.display = 'none';
+  }
+}
+
+/* ============================================================
+   9. お気に入り
+   ============================================================ */
+
+function toggleFavoriteFromCard(paperId, btnEl){
+  const paper = findPaperById(paperId, 'result');
+  if(!paper) return;
+  const idx = state.favorites.findIndex(f => f.id === paperId);
+  if(idx >= 0){
+    state.favorites.splice(idx, 1);
+    if(btnEl){ btnEl.classList.remove('active'); btnEl.textContent = '☆'; }
+    showToast('お気に入りから削除しました');
+  }else{
+    const favObj = Object.assign({}, paper, { memo:'', read:false, savedAt: Date.now() });
+    state.favorites.push(favObj);
+    if(btnEl){ btnEl.classList.add('active'); btnEl.textContent = '★'; }
+    showToast('お気に入りに追加しました');
+  }
+  saveJSON(LS_KEYS.favorites, state.favorites);
+  if(state.currentPage === 'favorites') renderFavorites();
+  if(state.currentPage === 'home') renderHome();
+}
+
+function renderFavorites(){
+  const checkedRanks = Array.from(document.querySelectorAll('#fav-rank-filters input:checked')).map(i => i.value);
+  const readFilter = document.getElementById('fav-read-filter').value;
+
+  let list = state.favorites.filter(f => checkedRanks.includes(f.score.rank));
+  if(readFilter === 'read') list = list.filter(f => f.read);
+  if(readFilter === 'unread') list = list.filter(f => !f.read);
+  list = list.slice().sort((a,b) => (b.savedAt||0) - (a.savedAt||0));
+
+  const el = document.getElementById('favorites-list');
+  if(!list.length){
+    el.innerHTML = '<div class="empty-state"><span class="big">⭐</span>条件に一致するお気に入りはありません</div>';
+    return;
+  }
+  el.innerHTML = list.map(p => buildPaperCard(p, { source:'favorite', read: !!p.read, memo: p.memo })).join('');
+}
+
+/* ============================================================
+   10. 論文詳細オーバーレイ
+   ============================================================ */
+
+function openDetailById(paperId, sourceHint){
+  const paper = findPaperById(paperId, sourceHint);
+  if(!paper){ showToast('論文情報が見つかりませんでした'); return; }
+  state.currentDetailPaper = paper;
+  state.currentDetailSource = isFavorited(paperId) ? 'favorite' : 'result';
+  renderDetail();
+  document.getElementById('detail-overlay').classList.add('active');
+}
+function closeDetail(){
+  document.getElementById('detail-overlay').classList.remove('active');
+  state.currentDetailPaper = null;
+}
+
+function renderDetail(){
+  const paper = state.currentDetailPaper;
+  if(!paper) return;
+  const favData = state.favorites.find(f => f.id === paper.id);
+  const isFav = !!favData;
+  const memo = favData ? favData.memo : '';
+  const read = favData ? favData.read : false;
+  const b = paper.score.breakdown;
+
+  const authorsText = (paper.authors && paper.authors.length) ? paper.authors.join('、') : '著者情報なし';
+  const doiLine = paper.doi
+    ? '<a href="https://doi.org/' + escapeHTML(paper.doi) + '" target="_blank" rel="noopener">https://doi.org/' + escapeHTML(paper.doi) + '</a>'
+    : 'DOIなし';
+
+  const barRow = (label, value, max) => (
+    '<div class="score-bar-row">' +
+      '<div class="score-bar-label"><span>' + label + '</span><span>' + value + ' / ' + max + '</span></div>' +
+      '<div class="score-bar-bg"><div class="score-bar-fill" style="width:' + Math.min(100, (value/max)*100) + '%;"></div></div>' +
+    '</div>'
+  );
+
+  document.getElementById('detail-body').innerHTML =
+    '<span class="rank-badge rank-' + paper.score.rank + '" style="font-size:1.1rem; padding:4px 14px; height:auto;">' + paper.score.rank + 'ランク</span>' +
+    '<h2 style="margin-top:12px;">' + escapeHTML(paper.title) + '</h2>' +
+    '<p class="paper-title-ja">日本語タイトル（暫定）: ' + escapeHTML(paper.title) + '</p>' +
+
+    '<h3 class="section-title">基本情報</h3>' +
+    '<div class="card">' +
+      '<p><strong>著者:</strong> ' + escapeHTML(authorsText) + '</p>' +
+      '<p><strong>発表年:</strong> ' + (paper.year || '不明') + '</p>' +
+      '<p><strong>雑誌名:</strong> ' + escapeHTML(paper.journal) + '</p>' +
+      '<p><strong>引用数:</strong> ' + paper.citedBy + '</p>' +
+      '<p><strong>オープンアクセス:</strong> ' + (paper.isOA ? 'あり' : 'なし') + '</p>' +
+      '<p><strong>DOI:</strong> ' + doiLine + '</p>' +
+    '</div>' +
+
+    '<h3 class="section-title">要旨</h3>' +
+    '<div class="card"><p>' + (paper.abstract ? escapeHTML(paper.abstract) : '要旨情報がありません') + '</p></div>' +
+
+    '<h3 class="section-title">重要度の採点内訳（総合点 ' + paper.score.total + ' / 100）</h3>' +
+    '<div class="card score-bars">' +
+      barRow('研究概要との関連性', b.overview, 30) +
+      barRow('キーワード一致', b.keyword, 20) +
+      barRow('植物細胞との一致', b.plant, 10) +
+      barRow('核・細胞質・小器官との関連', b.organelle, 10) +
+      barRow('論文の新しさ', b.recency, 10) +
+      barRow('実験手法との一致', b.method, 10) +
+      barRow('引用数', b.citation, 5) +
+      barRow('次の実験につながる可能性', b.future, 5) +
+      (paper.score.excludeMatched && paper.score.excludeMatched.length ? '<p style="color:var(--danger); font-size:.82rem; margin-top:8px;">除外キーワードに一致したためスコアが減点されています: ' + escapeHTML(paper.score.excludeMatched.join('、')) + '</p>' : '') +
+    '</div>' +
+
+    '<h3 class="section-title">ユーザーメモ</h3>' +
+    '<div class="card">' +
+      '<textarea id="detail-memo" rows="4" placeholder="メモを入力（お気に入り登録すると保存されます）">' + escapeHTML(memo) + '</textarea>' +
+      '<div class="row" style="margin-top:10px;">' +
+        '<button class="btn btn-sm" onclick="saveDetailMemo()">メモを保存</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="row" style="margin-top:16px;">' +
+      '<button class="btn ' + (isFav ? 'btn-warm' : 'btn-primary') + '" onclick="toggleFavoriteFromDetail()">' + (isFav ? '★ お気に入り解除' : '☆ お気に入りに追加') + '</button>' +
+      '<button class="btn" onclick="toggleReadFromDetail()" ' + (isFav ? '' : 'disabled') + '>' + (read ? '未読にする' : '既読にする') + '</button>' +
+    '</div>' +
+    (isFav ? '' : '<p class="hint" style="margin-top:8px;">既読/未読の切り替えはお気に入り登録後に利用できます</p>') +
+    '<button class="btn" style="margin-top:10px;" ' + (paper.doi ? '' : 'disabled') + ' onclick="openDOI(\'' + escapeHTML(paper.doi || '') + '\')">DOIを開く</button>';
+}
+
+function saveDetailMemo(){
+  const paper = state.currentDetailPaper;
+  if(!paper) return;
+  const memoText = document.getElementById('detail-memo').value;
+  let favData = state.favorites.find(f => f.id === paper.id);
+  if(!favData){
+    favData = Object.assign({}, paper, { memo:'', read:false, savedAt: Date.now() });
+    state.favorites.push(favData);
+  }
+  favData.memo = memoText;
+  saveJSON(LS_KEYS.favorites, state.favorites);
+  showToast('メモを保存しました');
+  renderDetail();
+}
+
+function toggleFavoriteFromDetail(){
+  const paper = state.currentDetailPaper;
+  if(!paper) return;
+  const idx = state.favorites.findIndex(f => f.id === paper.id);
+  if(idx >= 0){
+    state.favorites.splice(idx, 1);
+    showToast('お気に入りから削除しました');
+  }else{
+    state.favorites.push(Object.assign({}, paper, { memo:'', read:false, savedAt: Date.now() }));
+    showToast('お気に入りに追加しました');
+  }
+  saveJSON(LS_KEYS.favorites, state.favorites);
+  renderDetail();
+}
+
+function toggleReadFromDetail(){
+  const paper = state.currentDetailPaper;
+  const favData = state.favorites.find(f => f.id === paper.id);
+  if(!favData) return;
+  favData.read = !favData.read;
+  saveJSON(LS_KEYS.favorites, state.favorites);
+  renderDetail();
+}
+
+function openDOI(doi){
+  if(!doi){ showToast('この論文にはDOIがありません'); return; }
+  window.open('https://doi.org/' + doi, '_blank', 'noopener');
+}
+
+/* ============================================================
+   11. 研究プロフィール画面
+   ============================================================ */
+
+function loadProfileForm(){
+  document.getElementById('profile-title').value = state.profile.title || '';
+  document.getElementById('profile-overview').value = state.profile.overview || '';
+  document.getElementById('profile-hypothesis').value = state.profile.hypothesis || '';
+  document.getElementById('profile-methods').value = state.profile.methods || '';
+  document.getElementById('profile-future').value = state.profile.future || '';
+  document.getElementById('profile-major-keywords').value = state.profile.majorKeywords || '';
+  document.getElementById('profile-related-keywords').value = state.profile.relatedKeywords || '';
+  document.getElementById('profile-exclude-keywords').value = state.profile.excludeKeywords || '';
+}
+
+function saveProfile(){
+  state.profile = {
+    title: document.getElementById('profile-title').value.trim(),
+    overview: document.getElementById('profile-overview').value.trim(),
+    hypothesis: document.getElementById('profile-hypothesis').value.trim(),
+    methods: document.getElementById('profile-methods').value.trim(),
+    future: document.getElementById('profile-future').value.trim(),
+    majorKeywords: document.getElementById('profile-major-keywords').value.trim(),
+    relatedKeywords: document.getElementById('profile-related-keywords').value.trim(),
+    excludeKeywords: document.getElementById('profile-exclude-keywords').value.trim()
+  };
+  saveJSON(LS_KEYS.profile, state.profile);
+  // 既存の検索結果・お気に入りのスコアを再計算する
+  if(state.lastResults && state.lastResults.papers){
+    state.lastResults.papers = state.lastResults.papers.map(p => Object.assign({}, p, { score: computeScore(p, state.profile, state.settings) }));
+    saveJSON(LS_KEYS.lastResults, state.lastResults);
+  }
+  state.favorites = state.favorites.map(p => Object.assign({}, p, { score: computeScore(p, state.profile, state.settings) }));
+  saveJSON(LS_KEYS.favorites, state.favorites);
+  showToast('プロフィールを保存しました');
+}
+
+/* ============================================================
+   12. 設定画面
+   ============================================================ */
+
+function loadSettingsForm(){
+  document.getElementById('settings-results-count').value = String(state.settings.resultsPerPage);
+  document.getElementById('settings-weight-recency').value = state.settings.weightRecency;
+  document.getElementById('settings-weight-keyword').value = state.settings.weightKeyword;
+  document.getElementById('settings-weight-citation').value = state.settings.weightCitation;
+  document.getElementById('val-recency').textContent = state.settings.weightRecency.toFixed(1);
+  document.getElementById('val-keyword').textContent = state.settings.weightKeyword.toFixed(1);
+  document.getElementById('val-citation').textContent = state.settings.weightCitation.toFixed(1);
+  document.getElementById('settings-dark-mode').checked = !!state.settings.darkMode;
+}
+
+function updateWeightLabel(kind){
+  const map = { recency:'settings-weight-recency', keyword:'settings-weight-keyword', citation:'settings-weight-citation' };
+  const val = parseFloat(document.getElementById(map[kind]).value);
+  document.getElementById('val-' + kind).textContent = val.toFixed(1);
+}
+
+function saveSettings(){
+  state.settings = {
+    resultsPerPage: parseInt(document.getElementById('settings-results-count').value, 10),
+    weightRecency: parseFloat(document.getElementById('settings-weight-recency').value),
+    weightKeyword: parseFloat(document.getElementById('settings-weight-keyword').value),
+    weightCitation: parseFloat(document.getElementById('settings-weight-citation').value),
+    darkMode: document.getElementById('settings-dark-mode').checked
+  };
+  saveJSON(LS_KEYS.settings, state.settings);
+  applyTheme();
+  showToast('設定を保存しました');
+}
+
+function toggleDarkMode(){
+  state.settings.darkMode = document.getElementById('settings-dark-mode').checked;
+  applyTheme();
+  saveJSON(LS_KEYS.settings, state.settings);
+}
+
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme', state.settings.darkMode ? 'dark' : 'light');
+}
+
+function exportData(){
+  const payload = {
+    profile: state.profile,
+    favorites: state.favorites,
+    settings: state.settings,
+    lastResults: state.lastResults,
+    exportedAt: new Date().toISOString()
+  };
+  try{
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'research-compass-data.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('JSONファイルを書き出しました');
+  }catch(e){
+    console.error(e);
+    showToast('書き出しに失敗しました');
+  }
+}
+
+function importData(evt){
+  const file = evt.target.files && evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(){
+    try{
+      const data = JSON.parse(reader.result);
+      if(data.profile) { state.profile = data.profile; saveJSON(LS_KEYS.profile, state.profile); }
+      if(data.favorites) { state.favorites = data.favorites; saveJSON(LS_KEYS.favorites, state.favorites); }
+      if(data.settings) { state.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings); saveJSON(LS_KEYS.settings, state.settings); }
+      if(data.lastResults) { state.lastResults = data.lastResults; saveJSON(LS_KEYS.lastResults, state.lastResults); }
+      applyTheme();
+      loadProfileForm();
+      loadSettingsForm();
+      renderHome();
+      showToast('データを読み込みました');
+    }catch(e){
+      console.error(e);
+      showToast('JSONファイルの読み込みに失敗しました。形式を確認してください。');
+    }
+    evt.target.value = '';
+  };
+  reader.onerror = function(){
+    showToast('ファイルの読み込みに失敗しました');
+    evt.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function confirmClearAll(){
+  openConfirmDialog('全データ削除', 'プロフィール・お気に入り・検索履歴・設定をすべて削除します。この操作は取り消せません。よろしいですか？', function(){
+    Object.values(LS_KEYS).forEach(k => localStorage.removeItem(k));
+    showToast('すべてのデータを削除しました');
+    setTimeout(() => location.reload(), 600);
+  });
+}
+
+/* ============================================================
+   13. 初期化
+   ============================================================ */
+
+function init(){
+  initState();
+  applyTheme();
+  loadProfileForm();
+  loadSettingsForm();
+  populateSearchDefaults();
+  renderHome();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+
+// グローバルスコープに公開（インラインonclick属性から呼び出すため）
+window.showPage = showPage;
+window.closeIntroCard = closeIntroCard;
+window.runSearch = runSearch;
+window.toggleFavoriteFromCard = toggleFavoriteFromCard;
+window.renderFavorites = renderFavorites;
+window.openDetailById = openDetailById;
+window.closeDetail = closeDetail;
+window.saveDetailMemo = saveDetailMemo;
+window.toggleFavoriteFromDetail = toggleFavoriteFromDetail;
+window.toggleReadFromDetail = toggleReadFromDetail;
+window.openDOI = openDOI;
+window.saveProfile = saveProfile;
+window.updateWeightLabel = updateWeightLabel;
+window.saveSettings = saveSettings;
+window.toggleDarkMode = toggleDarkMode;
+window.exportData = exportData;
+window.importData = importData;
+window.confirmClearAll = confirmClearAll;
+window.closeConfirmDialog = closeConfirmDialog;
+
+})();
+</script>
+</body>
+</html>
