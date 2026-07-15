@@ -33,6 +33,7 @@
   --rank-b: #6E7F8A;
   --rank-c: #9AA39B;
   --danger: #B23A3A;
+  --danger-soft: #F8E5E1;
   --shadow: 0 2px 10px rgba(30,42,32,0.08);
   --shadow-lg: 0 8px 28px rgba(30,42,32,0.14);
   --radius: 14px;
@@ -57,6 +58,7 @@
   --rank-a: #6FA383;
   --rank-b: #8B99A2;
   --rank-c: #6E796F;
+  --danger-soft: #3A2222;
   --shadow: 0 2px 10px rgba(0,0,0,0.35);
   --shadow-lg: 0 8px 28px rgba(0,0,0,0.45);
 }
@@ -195,7 +197,7 @@ input, select, textarea{ font-family: inherit; font-size: 16px; }
 .rank-badge.rank-A{ background: var(--rank-a); }
 .rank-badge.rank-B{ background: var(--rank-b); }
 .rank-badge.rank-C{ background: var(--rank-c); }
-.paper-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.paper-top{ display:flex; align-items:center; justify-content:space-between; gap:6px 8px; margin-bottom:8px; flex-wrap:wrap; }
 .paper-score{ font-size:.8rem; color: var(--text-muted); }
 .paper-score b{ font-size:1.05rem; color: var(--text); }
 .paper-title-en{ font-size:1rem; font-weight:700; margin: 2px 0; }
@@ -205,6 +207,26 @@ input, select, textarea{ font-family: inherit; font-size: 16px; }
 .oa-badge{ display:inline-block; font-size:.7rem; padding:2px 8px; border-radius:999px; background: var(--accent-soft); color: var(--accent-dark); font-weight:700; margin-left:6px; }
 .paper-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
 .paper-actions .btn{ flex:1; min-width: 100px; }
+
+/* --- 読むべき理由／実験手法／一致ポイント／難易度（v2追加） --- */
+.info-block{ margin: 8px 0; }
+.info-block .label{ display:block; font-size:.72rem; font-weight:700; color: var(--accent-dark); margin-bottom:4px; letter-spacing:.02em; }
+.reason-list{ margin:0; padding-left: 18px; font-size:.78rem; color: var(--text-muted); line-height:1.5; }
+.reason-list li{ margin-bottom:1px; }
+.tag-list{ display:flex; flex-wrap:wrap; gap:6px; }
+.tag{
+  display:inline-block; font-size:.72rem; line-height:1.4; padding:3px 10px; border-radius:999px;
+  background: var(--surface-2); color: var(--text-muted); border:1px solid var(--border); white-space:nowrap;
+}
+.tag.method{ background: var(--accent-soft); color: var(--accent-dark); border-color: var(--accent); }
+.tag.match{ background: var(--warm-soft); color: var(--warm); border-color: var(--warm); }
+.difficulty-badge{
+  display:inline-flex; align-items:center; font-size:.72rem; font-weight:700; padding:3px 10px;
+  border-radius:999px; white-space:nowrap;
+}
+.difficulty-badge.beginner{ background: var(--accent-soft); color: var(--accent-dark); }
+.difficulty-badge.intermediate{ background: var(--warm-soft); color: var(--warm); }
+.difficulty-badge.advanced{ background: var(--danger-soft); color: var(--danger); }
 
 /* --- ローディング / エラー --- */
 .loader{ display:flex; align-items:center; gap:10px; color: var(--text-muted); padding: 20px 0; justify-content:center; }
@@ -592,6 +614,39 @@ const DOMAIN_CONCEPTS = [
   { group:'bimodal',      label:'二峰性分布',    ja:['二峰性','分布'], en:['bimodal','distribution'] }
 ];
 
+// 実験手法タグ検出辞書（AI不使用）。タイトル・要旨・OpenAlexキーワード/トピックの英語表現から検出する。
+// 表示ラベルはユーザー指定の日本語手法名リストに準拠。
+const METHOD_DETECTORS = [
+  { label:'共焦点顕微鏡',        en:['confocal microscop','confocal laser scanning'] },
+  { label:'蛍光顕微鏡',          en:['fluorescence microscop','fluorescent microscop'] },
+  { label:'蛍光寿命イメージング', en:['fluorescence lifetime imaging'] },
+  { label:'FLIM',               en:['flim'] },
+  { label:'蛍光温度プローブ',    en:['fluorescent temperature probe','fluorescence thermometry','fluorescent thermometer','temperature probe'] },
+  { label:'ライブセルイメージング', en:['live cell imaging','live-cell imaging'] },
+  { label:'細胞培養',            en:['cell culture','cultured cell'] },
+  { label:'植物培養細胞',        en:['plant cell culture','cultured plant cell','tobacco by-2'] },
+  { label:'HeLa細胞',            en:['hela cell'] },
+  { label:'BY-2細胞',            en:['by-2 cell','by-2 cells','by-2 tobacco'] },
+  { label:'画像解析',            en:['image analysis','image processing','trackmate'] },
+  { label:'統計解析',            en:['statistical analysis','statistical test'] },
+  { label:'遺伝子発現解析',      en:['gene expression analysis','gene expression profiling'] },
+  { label:'RNA-seq',            en:['rna-seq','rna sequencing','transcriptome analysis'] },
+  { label:'ウェスタンブロッティング', en:['western blot'] },
+  { label:'免疫染色',            en:['immunostaining','immunofluorescence staining','immunohistochemistry'] },
+  { label:'ミトコンドリア機能解析', en:['mitochondrial function','mitochondrial activity assay','mitochondrial respiration'] },
+  { label:'細胞周期解析',        en:['cell cycle analysis','cell cycle synchronization','flow cytometry'] },
+  { label:'温度イメージング',    en:['temperature imaging','thermal imaging'] },
+  { label:'熱産生測定',          en:['heat production measurement','thermogenesis measurement','calorimetry'] }
+];
+
+// 難易度判定に用いる高度手法・専門用語（数理モデル／オミクス／高度画像解析／複雑な分子機構）
+const ADVANCED_DIFFICULTY_TERMS = [
+  'mathematical model','simulation','algorithm','machine learning','deep learning',
+  'neural network','omics','proteomic','genomic','transcriptome','metabolome',
+  'rna-seq','systems biology','stochastic model','computational model',
+  'differential equation','bayesian','regression model','signal transduction pathway'
+];
+
 let state = {
   currentPage: 'home',
   profile: null,
@@ -689,6 +744,23 @@ function normalizePaper(work){
   let isOA = false;
   try{ isOA = !!(work.open_access && work.open_access.is_oa); }catch(e){ isOA = false; }
 
+  // OpenAlexのキーワード・トピック情報（読むべき理由／実験手法／一致ポイントの判定に使用）
+  let keywords = [];
+  try{
+    if(Array.isArray(work.keywords)){
+      keywords = work.keywords.map(k => k && k.display_name).filter(Boolean);
+    }
+  }catch(e){ keywords = []; }
+
+  let topics = [];
+  try{
+    if(Array.isArray(work.topics)){
+      topics = work.topics.map(t => t && t.display_name).filter(Boolean);
+    }else if(Array.isArray(work.concepts)){
+      topics = work.concepts.map(c => c && c.display_name).filter(Boolean);
+    }
+  }catch(e){ topics = []; }
+
   return {
     id: work.id || ('tmp_' + Math.random().toString(36).slice(2)),
     title: work.display_name || work.title || 'タイトル不明',
@@ -698,7 +770,9 @@ function normalizePaper(work){
     citedBy: typeof work.cited_by_count === 'number' ? work.cited_by_count : 0,
     doi: doi,
     isOA: isOA,
-    abstract: restoreAbstract(work.abstract_inverted_index)
+    abstract: restoreAbstract(work.abstract_inverted_index),
+    keywords: keywords,
+    topics: topics
   };
 }
 
@@ -842,6 +916,105 @@ function scorePapers(papers){
 }
 
 /* ============================================================
+   4b. 読むべき理由・実験手法・一致ポイント・難易度の判定
+        （AI未使用。タイトル・要旨・OpenAlexキーワード/トピック・研究プロフィールの
+        単語一致のみで判定する簡易解析。読む時間の表示は行わない。）
+   ============================================================ */
+
+function analyzePaper(paper, profile){
+  const combinedText = [
+    paper.title || '',
+    paper.abstract || '',
+    (paper.keywords || []).join(' '),
+    (paper.topics || []).join(' ')
+  ].join(' ').toLowerCase();
+
+  const profileText = [profile.overview, profile.hypothesis, profile.future, profile.methods].join(' ');
+
+  function profileMentions(entry){ return entry.ja.some(w => profileText.includes(w)); }
+  function paperMentions(entry){ return entry.en.some(w => combinedText.includes(w.toLowerCase())); }
+
+  // プロフィールが言及し、かつ論文にも登場する概念（＝一致ポイント用）
+  const mentionedGroups = DOMAIN_CONCEPTS.filter(profileMentions);
+  const profileMatchedConceptGroups = mentionedGroups.filter(paperMentions);
+  // 論文自体に登場する概念全般（＝読むべき理由の判定に使用。プロフィール未言及でも可）
+  const paperConceptGroups = DOMAIN_CONCEPTS.filter(paperMentions);
+
+  const majorKeywords = splitLines(profile.majorKeywords);
+  const relatedKeywords = splitLines(profile.relatedKeywords);
+  const majorMatched = majorKeywords.filter(k => combinedText.includes(k.toLowerCase()));
+  const relatedMatched = relatedKeywords.filter(k => combinedText.includes(k.toLowerCase()));
+
+  // --- 実験手法タグの検出 ---
+  const detectedMethods = METHOD_DETECTORS
+    .filter(m => m.en.some(w => combinedText.includes(w.toLowerCase())))
+    .map(m => m.label);
+
+  // --- 読むべき理由（優先度順。カード表示側で最大4件に絞る） ---
+  const reasons = [];
+  const hasGroup = (g) => paperConceptGroups.some(e => e.group === g);
+  if(majorMatched.length > 0) reasons.push('研究プロフィールの最重要キーワードと一致');
+  if(hasGroup('plant')) reasons.push('植物細胞を対象としている');
+  if((hasGroup('nucleus') || hasGroup('cytoplasm')) && hasGroup('temperature')) reasons.push('核や細胞質の温度差に関連する');
+  if(detectedMethods.includes('蛍光温度プローブ')) reasons.push('蛍光温度プローブを使用している');
+  if(detectedMethods.includes('FLIM') || detectedMethods.includes('共焦点顕微鏡') || detectedMethods.includes('蛍光寿命イメージング')) reasons.push('FLIMや共焦点顕微鏡を使用している');
+  if(hasGroup('cellcycle')) reasons.push('細胞周期の仮説検証に使える');
+  if(hasGroup('mitochondria')) reasons.push('ミトコンドリアの熱産生に関連する');
+  if(hasGroup('vacuole')) reasons.push('液胞や細胞内熱拡散に関連する');
+  if(hasGroup('salicylic') || hasGroup('aox')) reasons.push('サリチル酸やAOX経路に関連する');
+  const currentYear = new Date().getFullYear();
+  if(paper.year && (currentYear - paper.year) <= 2) reasons.push('最近発表された論文である');
+  if((paper.citedBy || 0) >= 100) reasons.push('引用数が多い基礎的重要論文である');
+  const uniqueReasons = Array.from(new Set(reasons));
+
+  // --- 研究との一致ポイント（プロフィールの各項目と照合した具体語） ---
+  const matchPointSet = new Set();
+  majorMatched.forEach(k => matchPointSet.add(k));
+  relatedMatched.forEach(k => matchPointSet.add(k));
+  profileMatchedConceptGroups.forEach(g => matchPointSet.add(g.label));
+  const matchPoints = Array.from(matchPointSet);
+
+  // --- 難易度判定 ---
+  const difficulty = computeDifficulty(paper, combinedText, detectedMethods);
+
+  return {
+    reasons: uniqueReasons,
+    methods: detectedMethods,
+    matchPoints: matchPoints,
+    difficulty: difficulty
+  };
+}
+
+function computeDifficulty(paper, combinedText, detectedMethods){
+  const advancedCount = ADVANCED_DIFFICULTY_TERMS.filter(t => combinedText.includes(t)).length;
+  const isReview = /\breview\b/.test((paper.title || '').toLowerCase());
+  const abstractWordCount = (paper.abstract || '').trim()
+    ? (paper.abstract || '').trim().split(/\s+/).length
+    : 0;
+  const methodsCount = detectedMethods.length;
+  // 専門用語の豊富さの目安：ドメイン概念＋検出手法の合計数
+  const termRichness = DOMAIN_CONCEPTS.filter(e => e.en.some(w => combinedText.includes(w.toLowerCase()))).length + methodsCount;
+
+  // 初級らしさのスコア：総説／要旨が短い／手法が少ない／専門用語が少ない
+  let beginnerScore = 0;
+  if(isReview) beginnerScore += 2;
+  if(abstractWordCount > 0 && abstractWordCount < 100) beginnerScore += 1;
+  if(methodsCount <= 1) beginnerScore += 1;
+  if(advancedCount === 0) beginnerScore += 1;
+  if(termRichness <= 2) beginnerScore += 1;
+
+  // 上級らしさのスコア：数理モデル／オミクス／複雑な分子機構／専門用語が多い
+  let advancedScore = advancedCount * 2;
+  if(methodsCount >= 4) advancedScore += 1;
+  if(abstractWordCount >= 250) advancedScore += 1;
+  if(termRichness >= 7) advancedScore += 1;
+
+  if(advancedScore >= 3) return '上級';
+  if(beginnerScore >= 3) return '初級';
+  return '中級';
+}
+
+/* ============================================================
    5. ページ切り替え・共通UI
    ============================================================ */
 
@@ -918,11 +1091,36 @@ function buildPaperCard(paper, opts){
     ? '<div class="paper-reasons" style="background:var(--warm-soft); color:var(--text);">📝 メモ: ' + escapeHTML(opts.memo) + '</div>'
     : '';
 
+  // 読むべき理由／実験手法／一致ポイント／難易度（AI不使用の簡易解析。カードでは件数を絞って表示）
+  const analysis = analyzePaper(paper, state.profile);
+  const reasonsForCard = analysis.reasons.slice(0, 4);
+  const methodsForCard = analysis.methods.slice(0, 5);
+  const matchPointsForCard = analysis.matchPoints.slice(0, 5);
+  const difficultyClass = analysis.difficulty === '初級' ? 'beginner' : (analysis.difficulty === '上級' ? 'advanced' : 'intermediate');
+  const difficultyBadgeHtml = '<span class="difficulty-badge ' + difficultyClass + '">難易度：' + analysis.difficulty + '</span>';
+
+  const readingReasonsHtml = reasonsForCard.length
+    ? '<div class="info-block"><span class="label">読むべき理由</span><ul class="reason-list">' +
+        reasonsForCard.map(r => '<li>' + escapeHTML(r) + '</li>').join('') +
+      '</ul></div>'
+    : '';
+  const methodsHtml = methodsForCard.length
+    ? '<div class="info-block"><span class="label">想定される実験手法</span><div class="tag-list">' +
+        methodsForCard.map(m => '<span class="tag method">' + escapeHTML(m) + '</span>').join('') +
+      '</div></div>'
+    : '';
+  const matchPointsHtml = matchPointsForCard.length
+    ? '<div class="info-block"><span class="label">研究との一致ポイント</span><div class="tag-list">' +
+        matchPointsForCard.map(m => '<span class="tag match">' + escapeHTML(m) + '</span>').join('') +
+      '</div></div>'
+    : '';
+
   return '' +
   '<div class="paper-card rank-' + paper.score.rank + '">' +
     '<div class="paper-top">' +
       '<span class="rank-badge rank-' + paper.score.rank + '">' + paper.score.rank + '</span>' +
       '<span class="paper-score">総合点 <b>' + paper.score.total + '</b> / 100</span>' +
+      difficultyBadgeHtml +
       readBadgeHtml +
     '</div>' +
     '<div class="paper-title-en">' + escapeHTML(paper.title) +
@@ -933,6 +1131,9 @@ function buildPaperCard(paper, opts){
     '<p class="paper-meta">発表年: ' + (paper.year || '不明') + ' ／ 雑誌: ' + escapeHTML(paper.journal) + ' ／ 引用数: ' + paper.citedBy + '</p>' +
     '<div class="paper-reasons">一致理由: ' + escapeHTML(reasons) + '</div>' +
     memoHtml +
+    readingReasonsHtml +
+    methodsHtml +
+    matchPointsHtml +
     '<div class="paper-actions">' +
       '<button class="icon-btn ' + (fav ? 'active' : '') + '" onclick="toggleFavoriteFromCard(\'' + paper.id + '\', this)" aria-label="お気に入り">' + (fav ? '★' : '☆') + '</button>' +
       '<button class="btn btn-sm" onclick="openDetailById(\'' + paper.id + '\', \'' + (opts.source || 'result') + '\')">論文詳細</button>' +
@@ -1123,6 +1324,12 @@ function renderDetail(){
   const doiLine = paper.doi
     ? '<a href="https://doi.org/' + escapeHTML(paper.doi) + '" target="_blank" rel="noopener">https://doi.org/' + escapeHTML(paper.doi) + '</a>'
     : 'DOIなし';
+  const keywordsText = (paper.keywords && paper.keywords.length) ? paper.keywords.join('、') : 'なし';
+  const topicsText = (paper.topics && paper.topics.length) ? paper.topics.join('、') : 'なし';
+
+  // 読むべき理由／実験手法／一致ポイント／難易度（詳細画面では全件表示）
+  const analysis = analyzePaper(paper, state.profile);
+  const difficultyClass = analysis.difficulty === '初級' ? 'beginner' : (analysis.difficulty === '上級' ? 'advanced' : 'intermediate');
 
   const barRow = (label, value, max) => (
     '<div class="score-bar-row">' +
@@ -1132,7 +1339,8 @@ function renderDetail(){
   );
 
   document.getElementById('detail-body').innerHTML =
-    '<span class="rank-badge rank-' + paper.score.rank + '" style="font-size:1.1rem; padding:4px 14px; height:auto;">' + paper.score.rank + 'ランク</span>' +
+    '<span class="rank-badge rank-' + paper.score.rank + '" style="font-size:1.1rem; padding:4px 14px; height:auto;">' + paper.score.rank + 'ランク</span> ' +
+    '<span class="difficulty-badge ' + difficultyClass + '" style="font-size:.85rem; padding:5px 12px; vertical-align:middle;">難易度：' + analysis.difficulty + '</span>' +
     '<h2 style="margin-top:12px;">' + escapeHTML(paper.title) + '</h2>' +
     '<p class="paper-title-ja">日本語タイトル（暫定）: ' + escapeHTML(paper.title) + '</p>' +
 
@@ -1144,10 +1352,33 @@ function renderDetail(){
       '<p><strong>引用数:</strong> ' + paper.citedBy + '</p>' +
       '<p><strong>オープンアクセス:</strong> ' + (paper.isOA ? 'あり' : 'なし') + '</p>' +
       '<p><strong>DOI:</strong> ' + doiLine + '</p>' +
+      '<p><strong>OpenAlexキーワード:</strong> ' + escapeHTML(keywordsText) + '</p>' +
+      '<p><strong>OpenAlexトピック:</strong> ' + escapeHTML(topicsText) + '</p>' +
     '</div>' +
 
     '<h3 class="section-title">要旨</h3>' +
     '<div class="card"><p>' + (paper.abstract ? escapeHTML(paper.abstract) : '要旨情報がありません') + '</p></div>' +
+
+    '<h3 class="section-title">読むべき理由</h3>' +
+    '<div class="card">' +
+      (analysis.reasons.length
+        ? '<ul class="reason-list" style="padding-left:20px; font-size:.86rem;">' + analysis.reasons.map(r => '<li>' + escapeHTML(r) + '</li>').join('') + '</ul>'
+        : '<p class="hint" style="margin:0;">明確な一致理由は見つかりませんでした</p>') +
+    '</div>' +
+
+    '<h3 class="section-title">この論文で使われている可能性が高い実験手法</h3>' +
+    '<div class="card">' +
+      (analysis.methods.length
+        ? '<div class="tag-list">' + analysis.methods.map(m => '<span class="tag method">' + escapeHTML(m) + '</span>').join('') + '</div>'
+        : '<p class="hint" style="margin:0;">タイトル・要旨から検出された手法はありません</p>') +
+    '</div>' +
+
+    '<h3 class="section-title">研究との一致ポイント</h3>' +
+    '<div class="card">' +
+      (analysis.matchPoints.length
+        ? '<div class="tag-list">' + analysis.matchPoints.map(m => '<span class="tag match">' + escapeHTML(m) + '</span>').join('') + '</div>'
+        : '<p class="hint" style="margin:0;">研究プロフィールとの明確な一致は見つかりませんでした</p>') +
+    '</div>' +
 
     '<h3 class="section-title">重要度の採点内訳（総合点 ' + paper.score.total + ' / 100）</h3>' +
     '<div class="card score-bars">' +
