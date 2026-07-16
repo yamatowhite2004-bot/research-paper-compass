@@ -228,6 +228,19 @@ input, select, textarea{ font-family: inherit; font-size: 16px; }
 .difficulty-badge.intermediate{ background: var(--warm-soft); color: var(--warm); }
 .difficulty-badge.advanced{ background: var(--danger-soft); color: var(--danger); }
 
+/* --- AI解析（Gemini / Cloudflare Worker経由） --- */
+.ai-block{ margin: 10px 0 0; }
+.ai-btn{ width:100%; background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); }
+.ai-status{ display:flex; align-items:center; gap:8px; font-size:.8rem; color: var(--text-muted); margin-bottom:8px; }
+.spinner.small{ width:16px; height:16px; border-width:2px; }
+.ai-error-msg{ font-size:.8rem; color: var(--danger); margin-bottom:8px; font-weight:600; }
+.ai-result{ background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom:8px; }
+.ai-result-row{ margin-bottom:8px; }
+.ai-result-row:last-child{ margin-bottom:0; }
+.ai-result-label{ display:block; font-size:.7rem; font-weight:700; color: var(--accent-dark); margin-bottom:3px; letter-spacing:.02em; }
+.ai-result-title{ font-size:.92rem; font-weight:700; margin:0; color: var(--text); }
+.ai-result-row .reason-list{ color: var(--text); }
+
 /* --- ローディング / エラー --- */
 .loader{ display:flex; align-items:center; gap:10px; color: var(--text-muted); padding: 20px 0; justify-content:center; }
 .spinner{ width:22px; height:22px; border-radius:50%; border:3px solid var(--border); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
@@ -571,8 +584,14 @@ const LS_KEYS = {
   favorites: 'rc_favorites',
   settings: 'rc_settings',
   lastResults: 'rc_lastResults',
-  firstRun: 'rc_firstRun'
+  firstRun: 'rc_firstRun',
+  aiAnalysis: 'rc_aiAnalysis'
 };
+
+// Gemini AI解析用 Cloudflare Worker のエンドポイント。
+// Gemini APIキーはWorker側でのみ管理し、index.html内には一切含めない。
+const AI_WORKER_URL = 'https://research-compass-api.yamatowhite2004.workers.dev';
+const AI_TIMEOUT_MS = 30000;
 
 // 研究プロフィールの初期値（ユーザー提供のデフォルト）
 const DEFAULT_PROFILE = {
@@ -654,7 +673,10 @@ let state = {
   favorites: [],
   lastResults: null, // { params:{...}, papers:[...], timestamp }
   currentDetailPaper: null,
-  currentDetailSource: null // 'result' | 'favorite'
+  currentDetailSource: null, // 'result' | 'favorite'
+  aiAnalysisMap: {},      // 論文IDごとのAI解析結果（localStorageと同期）
+  aiInFlight: new Set(),  // 現在AI解析リクエスト中の論文ID（二重送信防止）
+  aiErrors: new Set()     // 直近のAI解析が失敗した論文ID
 };
 
 /* ============================================================
@@ -687,6 +709,7 @@ function initState(){
   state.settings = Object.assign({}, DEFAULT_SETTINGS, loadJSON(LS_KEYS.settings, {}));
   state.favorites = loadJSON(LS_KEYS.favorites, []);
   state.lastResults = loadJSON(LS_KEYS.lastResults, null);
+  state.aiAnalysisMap = loadJSON(LS_KEYS.aiAnalysis, {}) || {};
   if(!loadJSON(LS_KEYS.profile, null)){
     saveJSON(LS_KEYS.profile, state.profile); // 初回起動時にデフォルト値を保存
   }
@@ -1015,6 +1038,205 @@ function computeDifficulty(paper, combinedText, detectedMethods){
 }
 
 /* ============================================================
+   4c. Gemini AI解析（Cloudflare Worker経由）
+        ・APIキーはWorker側のみで保持し、本ファイルには一切含めない
+        ・日本語タイトル／3行要約／研究との関連性を1回のAPI通信で取得
+   ============================================================ */
+
+// Geminiへ送るプロンプトを構築する
+function buildAIPrompt(paper, profile){
+  const authorsText = (paper.authors && paper.authors.length) ? paper.authors.join('、') : '著者情報なし';
+  const keywordsText = (paper.keywords && paper.keywords.length) ? paper.keywords.join('、') : 'なし';
+  const topicsText = (paper.topics && paper.topics.length) ? paper.topics.join('、') : 'なし';
+
+  return [
+    'あなたは学術論文の読解を支援する日本語アシスタントです。',
+    '以下の論文情報とユーザーの研究プロフィールだけを根拠として、指定されたJSON形式のみを出力してください。',
+    '',
+    '【論文情報】',
+    'タイトル: ' + (paper.title || '不明'),
+    '著者: ' + authorsText,
+    '発表年: ' + (paper.year || '不明'),
+    '雑誌名: ' + (paper.journal || '不明'),
+    '要旨: ' + (paper.abstract || '要旨情報なし'),
+    'OpenAlexキーワード: ' + keywordsText,
+    'OpenAlexトピック: ' + topicsText,
+    '',
+    '【ユーザーの研究プロフィール】',
+    '研究タイトル: ' + (profile.title || '未入力'),
+    '研究概要: ' + (profile.overview || '未入力'),
+    '現在の仮説: ' + (profile.hypothesis || '未入力'),
+    '使用している実験手法: ' + (profile.methods || '未入力'),
+    '今後行いたい実験: ' + (profile.future || '未入力'),
+    '最重要キーワード: ' + (profile.majorKeywords || '未入力'),
+    '関連キーワード: ' + (profile.relatedKeywords || '未入力'),
+    '',
+    '【出力形式】',
+    '必ず次のJSON形式だけを出力してください。前後に説明文・Markdown・コードブロック(```)は一切付けないでください。',
+    '{',
+    '  "japaneseTitle": "自然な学術日本語のタイトル",',
+    '  "summary": ["1行目: 背景", "2行目: 主な結果", "3行目: 結論"],',
+    '  "researchRelation": ["関連点1", "関連点2", "関連点3"]',
+    '}',
+    '',
+    '【注意事項】',
+    '・事実と推測を明確に区別し、論文情報から判断できないことは断定しないでください。',
+    '・日本語タイトルは自然な学術日本語にしてください。',
+    '・3行要約は背景・主な結果・結論を基本構成としてください。',
+    '・研究との関連性は最大3件とし、関連性が弱い場合は「直接的な関連は限定的」と明記してください。',
+    '・JSON以外の文字列は一切出力しないでください。'
+  ].join('\n');
+}
+
+// Cloudflare WorkerへPOSTし、Geminiのテキスト応答を取得する（タイムアウト30秒）
+async function callGeminiWorker(prompt){
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  let res;
+  try{
+    res = await fetch(AI_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: prompt }),
+      signal: controller.signal
+    });
+  }catch(e){
+    clearTimeout(timeoutId);
+    if(e && e.name === 'AbortError'){
+      throw new Error('AI解析がタイムアウトしました（30秒）');
+    }
+    throw new Error('Workerへの通信に失敗しました');
+  }
+  clearTimeout(timeoutId);
+
+  if(!res.ok){
+    throw new Error('Workerがエラーを返しました（ステータス: ' + res.status + '）');
+  }
+
+  let data;
+  try{
+    data = await res.json();
+  }catch(e){
+    throw new Error('Workerの応答がJSONではありません');
+  }
+
+  if(!data || data.ok !== true || typeof data.text !== 'string'){
+    const serverError = (data && typeof data.error === 'string') ? data.error : 'AIの応答が不正です';
+    throw new Error(serverError);
+  }
+  return data.text;
+}
+
+// Geminiのテキスト応答からJSONを抽出・検証する（前後に余分な文字が付いても可能な範囲で救済する）
+function parseAIResultText(text){
+  if(typeof text !== 'string' || !text.trim()){
+    throw new Error('AI応答が空です');
+  }
+  let cleaned = text.trim();
+  // ```json ... ``` のようなコードブロック記法が付いていた場合は除去する
+  cleaned = cleaned.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '').trim();
+
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if(firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace){
+    throw new Error('AI応答からJSONを抽出できませんでした');
+  }
+  const jsonStr = cleaned.slice(firstBrace, lastBrace + 1);
+
+  let parsed;
+  try{
+    parsed = JSON.parse(jsonStr);
+  }catch(e){
+    throw new Error('AI応答のJSON解析に失敗しました');
+  }
+
+  if(!parsed || typeof parsed.japaneseTitle !== 'string'
+     || !Array.isArray(parsed.summary) || !Array.isArray(parsed.researchRelation)){
+    throw new Error('AI応答の形式が想定と異なります');
+  }
+
+  return {
+    japaneseTitle: parsed.japaneseTitle.trim(),
+    summary: parsed.summary.filter(s => typeof s === 'string' && s.trim()).slice(0, 3),
+    researchRelation: parsed.researchRelation.filter(s => typeof s === 'string' && s.trim()).slice(0, 3)
+  };
+}
+
+// AI解析結果をlocalStorageへ保存する（論文IDごと。お気に入り論文も同じIDで参照するため自動的に保持される）
+function saveAIAnalysisResult(paperId, result){
+  state.aiAnalysisMap[paperId] = result;
+  saveJSON(LS_KEYS.aiAnalysis, state.aiAnalysisMap);
+}
+
+// 画面上に存在する、指定した論文IDのAI解析ブロックをすべて再描画する
+// （ホーム／検索結果／お気に入り／詳細画面に同じ論文が複数表示されていても正しく更新する）
+function refreshAIBlocks(paperId){
+  document.querySelectorAll('[data-ai-paper-id="' + paperId + '"]').forEach(el => {
+    const variant = el.getAttribute('data-ai-variant') || 'card';
+    el.innerHTML = buildAIBlockHtml(paperId, variant);
+  });
+}
+
+// AI解析ブロックの中身（状態に応じて出し分け）を生成する
+function buildAIBlockHtml(paperId, variant){
+  const busy = state.aiInFlight.has(paperId);
+  const errored = state.aiErrors.has(paperId);
+  const result = state.aiAnalysisMap[paperId];
+
+  if(busy){
+    return '' +
+      '<div class="ai-status ai-loading"><div class="spinner small"></div><span>AI解析中…</span></div>' +
+      '<button class="btn btn-sm ai-btn" disabled>AI解析中…</button>';
+  }
+
+  if(errored){
+    return '' +
+      '<div class="ai-status ai-error-msg">AI解析に失敗しました</div>' +
+      '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">再試行</button>';
+  }
+
+  if(result){
+    const summaryItems = (result.summary || []).map(s => '<li>' + escapeHTML(s) + '</li>').join('');
+    const relationItems = (result.researchRelation || []).map(s => '<li>' + escapeHTML(s) + '</li>').join('');
+    return '' +
+      '<div class="ai-result">' +
+        '<div class="ai-result-row"><span class="ai-result-label">日本語タイトル</span><p class="ai-result-title">' + escapeHTML(result.japaneseTitle) + '</p></div>' +
+        '<div class="ai-result-row"><span class="ai-result-label">AI 3行要約</span><ul class="reason-list">' + summaryItems + '</ul></div>' +
+        '<div class="ai-result-row"><span class="ai-result-label">あなたの研究との関連</span><ul class="reason-list">' + relationItems + '</ul></div>' +
+      '</div>' +
+      '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">AI解析を更新</button>';
+  }
+
+  // 未解析（初期状態）
+  return '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">✨ AI解析</button>';
+}
+
+// AI解析を実行する（ボタンのonclickから呼ばれるエントリーポイント）
+async function requestAIAnalysis(paperId){
+  if(state.aiInFlight.has(paperId)) return; // 二重送信防止
+
+  const paper = findPaperById(paperId);
+  if(!paper){ showToast('論文情報が見つかりませんでした'); return; }
+
+  state.aiInFlight.add(paperId);
+  state.aiErrors.delete(paperId);
+  refreshAIBlocks(paperId);
+
+  try{
+    const prompt = buildAIPrompt(paper, state.profile);
+    const rawText = await callGeminiWorker(prompt);
+    const result = parseAIResultText(rawText);
+    saveAIAnalysisResult(paperId, result);
+  }catch(e){
+    console.error('AI解析エラー:', e);
+    state.aiErrors.add(paperId);
+  }finally{
+    state.aiInFlight.delete(paperId);
+    refreshAIBlocks(paperId);
+  }
+}
+
+/* ============================================================
    5. ページ切り替え・共通UI
    ============================================================ */
 
@@ -1134,6 +1356,7 @@ function buildPaperCard(paper, opts){
     readingReasonsHtml +
     methodsHtml +
     matchPointsHtml +
+    '<div class="ai-block" data-ai-paper-id="' + paper.id + '" data-ai-variant="card">' + buildAIBlockHtml(paper.id, 'card') + '</div>' +
     '<div class="paper-actions">' +
       '<button class="icon-btn ' + (fav ? 'active' : '') + '" onclick="toggleFavoriteFromCard(\'' + paper.id + '\', this)" aria-label="お気に入り">' + (fav ? '★' : '☆') + '</button>' +
       '<button class="btn btn-sm" onclick="openDetailById(\'' + paper.id + '\', \'' + (opts.source || 'result') + '\')">論文詳細</button>' +
@@ -1380,6 +1603,9 @@ function renderDetail(){
         : '<p class="hint" style="margin:0;">研究プロフィールとの明確な一致は見つかりませんでした</p>') +
     '</div>' +
 
+    '<h3 class="section-title">AI解析（Gemini）</h3>' +
+    '<div class="card ai-block" data-ai-paper-id="' + paper.id + '" data-ai-variant="detail">' + buildAIBlockHtml(paper.id, 'detail') + '</div>' +
+
     '<h3 class="section-title">重要度の採点内訳（総合点 ' + paper.score.total + ' / 100）</h3>' +
     '<div class="card score-bars">' +
       barRow('研究概要との関連性', b.overview, 30) +
@@ -1540,6 +1766,7 @@ function exportData(){
     favorites: state.favorites,
     settings: state.settings,
     lastResults: state.lastResults,
+    aiAnalysis: state.aiAnalysisMap,
     exportedAt: new Date().toISOString()
   };
   try{
@@ -1570,6 +1797,7 @@ function importData(evt){
       if(data.favorites) { state.favorites = data.favorites; saveJSON(LS_KEYS.favorites, state.favorites); }
       if(data.settings) { state.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings); saveJSON(LS_KEYS.settings, state.settings); }
       if(data.lastResults) { state.lastResults = data.lastResults; saveJSON(LS_KEYS.lastResults, state.lastResults); }
+      if(data.aiAnalysis) { state.aiAnalysisMap = data.aiAnalysis; saveJSON(LS_KEYS.aiAnalysis, state.aiAnalysisMap); }
       applyTheme();
       loadProfileForm();
       loadSettingsForm();
@@ -1631,6 +1859,7 @@ window.exportData = exportData;
 window.importData = importData;
 window.confirmClearAll = confirmClearAll;
 window.closeConfirmDialog = closeConfirmDialog;
+window.requestAIAnalysis = requestAIAnalysis;
 
 })();
 </script>
