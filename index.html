@@ -1050,7 +1050,7 @@ function buildAIPrompt(paper, profile){
   const topicsText = (paper.topics && paper.topics.length) ? paper.topics.join('、') : 'なし';
 
   return [
-    'あなたは学術論文の読解を支援する日本語アシスタントです。',
+    'あなたは学術論文の読解と研究活用を支援する日本語アシスタントです。',
     '以下の論文情報とユーザーの研究プロフィールだけを根拠として、指定されたJSON形式のみを出力してください。',
     '',
     '【論文情報】',
@@ -1075,15 +1075,28 @@ function buildAIPrompt(paper, profile){
     '必ず次のJSON形式だけを出力してください。前後に説明文・Markdown・コードブロック(```)は一切付けないでください。',
     '{',
     '  "japaneseTitle": "自然な学術日本語のタイトル",',
-    '  "summary": ["1行目: 背景", "2行目: 主な結果", "3行目: 結論"],',
-    '  "researchRelation": ["関連点1", "関連点2", "関連点3"]',
+    '  "summary": ["背景", "主な結果", "結論"],',
+    '  "researchRelation": ["関連点1", "関連点2", "関連点3"],',
+    '  "strengths": ["強み1", "強み2", "強み3"],',
+    '  "limitations": ["限界1", "限界2", "限界3"],',
+    '  "applications": ["自分の研究に活かせる点1", "自分の研究に活かせる点2", "自分の研究に活かせる点3"],',
+    '  "nextExperiments": ["実験案1", "実験案2", "実験案3"],',
+    '  "hypotheses": ["新しい仮説1", "新しい仮説2"],',
+    '  "relatedKeywords": ["英語検索語1", "英語検索語2", "英語検索語3", "英語検索語4", "英語検索語5"],',
+    '  "uncertainties": ["断定できない点1", "断定できない点2"]',
     '}',
     '',
-    '【注意事項】',
-    '・事実と推測を明確に区別し、論文情報から判断できないことは断定しないでください。',
+    '【判断ルール】',
+    '・論文タイトル、要旨、OpenAlexキーワード・トピック、研究プロフィールだけを根拠にしてください。',
+    '・事実と推測を明確に区別してください。',
+    '・要旨に書かれていない結果や手法を創作しないでください。',
+    '・判断できない場合は「要旨情報だけでは判断できない」と明記してください。',
+    '・strengthsは最大3件、limitationsは最大3件、applicationsは最大3件、nextExperimentsは最大3件にしてください。',
+    '・hypothesesは最大2件、uncertaintiesは最大2件にしてください。',
+    '・relatedKeywordsは英語で最大5件とし、OpenAlex検索でそのまま使いやすい具体的な語句にしてください。',
     '・日本語タイトルは自然な学術日本語にしてください。',
     '・3行要約は背景・主な結果・結論を基本構成としてください。',
-    '・研究との関連性は最大3件とし、関連性が弱い場合は「直接的な関連は限定的」と明記してください。',
+    '・researchRelationは最大3件とし、関連性が弱い場合は「直接的な関連は限定的」と明記してください。',
     '・JSON以外の文字列は一切出力しないでください。'
   ].join('\n');
 }
@@ -1127,6 +1140,15 @@ async function callGeminiWorker(prompt){
   return data.text;
 }
 
+// 文字列配列を安全に取り出す（配列でなければ空配列、文字列以外は除去、件数上限で切り詰め）
+function sanitizeStringArray(value, maxLen){
+  if(!Array.isArray(value)) return [];
+  return value
+    .filter(s => typeof s === 'string' && s.trim())
+    .map(s => s.trim())
+    .slice(0, maxLen);
+}
+
 // Geminiのテキスト応答からJSONを抽出・検証する（前後に余分な文字が付いても可能な範囲で救済する）
 function parseAIResultText(text){
   if(typeof text !== 'string' || !text.trim()){
@@ -1150,15 +1172,22 @@ function parseAIResultText(text){
     throw new Error('AI応答のJSON解析に失敗しました');
   }
 
-  if(!parsed || typeof parsed.japaneseTitle !== 'string'
-     || !Array.isArray(parsed.summary) || !Array.isArray(parsed.researchRelation)){
+  if(!parsed || typeof parsed !== 'object' || typeof parsed.japaneseTitle !== 'string' || !parsed.japaneseTitle.trim()){
     throw new Error('AI応答の形式が想定と異なります');
   }
 
+  // 新項目が欠けていてもエラーにせず空配列にする（旧保存データとの後方互換性のため）
   return {
     japaneseTitle: parsed.japaneseTitle.trim(),
-    summary: parsed.summary.filter(s => typeof s === 'string' && s.trim()).slice(0, 3),
-    researchRelation: parsed.researchRelation.filter(s => typeof s === 'string' && s.trim()).slice(0, 3)
+    summary: sanitizeStringArray(parsed.summary, 3),
+    researchRelation: sanitizeStringArray(parsed.researchRelation, 3),
+    strengths: sanitizeStringArray(parsed.strengths, 3),
+    limitations: sanitizeStringArray(parsed.limitations, 3),
+    applications: sanitizeStringArray(parsed.applications, 3),
+    nextExperiments: sanitizeStringArray(parsed.nextExperiments, 3),
+    hypotheses: sanitizeStringArray(parsed.hypotheses, 2),
+    relatedKeywords: sanitizeStringArray(parsed.relatedKeywords, 5),
+    uncertainties: sanitizeStringArray(parsed.uncertainties, 2)
   };
 }
 
@@ -1177,6 +1206,51 @@ function refreshAIBlocks(paperId){
   });
 }
 
+// AI解析結果のうち1項目分（見出し＋箇条書き）のHTMLを生成する。空配列は「情報がありません」と表示する。
+function aiSection(title, items){
+  const list = Array.isArray(items) ? items : [];
+  if(!list.length){
+    return '<div class="ai-result-row"><span class="ai-result-label">' + escapeHTML(title) + '</span><p class="hint" style="margin:0;">情報がありません</p></div>';
+  }
+  return '<div class="ai-result-row"><span class="ai-result-label">' + escapeHTML(title) + '</span><ul class="reason-list">' +
+    list.map(s => '<li>' + escapeHTML(s) + '</li>').join('') +
+    '</ul></div>';
+}
+
+// AI解析結果の中身を組み立てる。
+// variant='card' の場合は日本語タイトル／3行要約／研究との関連のみ（一覧カードが縦に長くなりすぎないようにするため）。
+// variant='detail' の場合は指定された表示順ですべての項目を表示し、類似論文検索ボタンも含める。
+function buildAIResultHtml(paperId, result, variant){
+  const core = '' +
+    '<div class="ai-result-row"><span class="ai-result-label">日本語タイトル</span><p class="ai-result-title">' + escapeHTML(result.japaneseTitle || '') + '</p></div>' +
+    aiSection('AI 3行要約', result.summary) +
+    aiSection('あなたの研究との関連', result.researchRelation);
+
+  if(variant !== 'detail'){
+    return '<div class="ai-result">' + core + '</div>';
+  }
+
+  const relatedKeywords = Array.isArray(result.relatedKeywords) ? result.relatedKeywords : [];
+  const hasKeywords = relatedKeywords.length > 0;
+  const keywordTags = hasKeywords
+    ? '<div class="tag-list">' + relatedKeywords.map(k => '<span class="tag match">' + escapeHTML(k) + '</span>').join('') + '</div>'
+    : '<p class="hint" style="margin:0 0 8px;">情報がありません</p>';
+  const similarSearchBtn = hasKeywords
+    ? '<button class="btn btn-sm ai-btn" style="margin-top:8px;" onclick="searchSimilarPapers(\'' + paperId + '\')">🔍 類似論文を探す</button>'
+    : '<button class="btn btn-sm ai-btn" style="margin-top:8px;" disabled>🔍 類似論文を探す</button><p class="hint" style="margin-top:4px;">AI解析後に利用できます</p>';
+
+  const extended = '' +
+    aiSection('この論文の強み', result.strengths) +
+    aiSection('この論文の限界', result.limitations) +
+    aiSection('自分の研究に活かせる点', result.applications) +
+    aiSection('次に行える実験案', result.nextExperiments) +
+    aiSection('新しい仮説', result.hypotheses) +
+    aiSection('断定できない点', result.uncertainties) +
+    '<div class="ai-result-row"><span class="ai-result-label">関連論文を探すための検索キーワード</span>' + keywordTags + similarSearchBtn + '</div>';
+
+  return '<div class="ai-result">' + core + extended + '</div>';
+}
+
 // AI解析ブロックの中身（状態に応じて出し分け）を生成する
 function buildAIBlockHtml(paperId, variant){
   const busy = state.aiInFlight.has(paperId);
@@ -1190,25 +1264,39 @@ function buildAIBlockHtml(paperId, variant){
   }
 
   if(errored){
-    return '' +
-      '<div class="ai-status ai-error-msg">AI解析に失敗しました</div>' +
-      '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">再試行</button>';
+    // 解析に失敗しても、保存済みの結果があればそのまま表示を維持し、失敗の通知と再試行ボタンのみ追加する
+    const errorNotice = '<div class="ai-status ai-error-msg">AI解析に失敗しました</div>';
+    const retryBtn = '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">再試行</button>';
+    if(result){
+      return errorNotice + buildAIResultHtml(paperId, result, variant) + retryBtn;
+    }
+    return errorNotice + retryBtn;
   }
 
   if(result){
-    const summaryItems = (result.summary || []).map(s => '<li>' + escapeHTML(s) + '</li>').join('');
-    const relationItems = (result.researchRelation || []).map(s => '<li>' + escapeHTML(s) + '</li>').join('');
-    return '' +
-      '<div class="ai-result">' +
-        '<div class="ai-result-row"><span class="ai-result-label">日本語タイトル</span><p class="ai-result-title">' + escapeHTML(result.japaneseTitle) + '</p></div>' +
-        '<div class="ai-result-row"><span class="ai-result-label">AI 3行要約</span><ul class="reason-list">' + summaryItems + '</ul></div>' +
-        '<div class="ai-result-row"><span class="ai-result-label">あなたの研究との関連</span><ul class="reason-list">' + relationItems + '</ul></div>' +
-      '</div>' +
+    return buildAIResultHtml(paperId, result, variant) +
       '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">AI解析を更新</button>';
   }
 
   // 未解析（初期状態）
   return '<button class="btn btn-sm ai-btn" onclick="requestAIAnalysis(\'' + paperId + '\')">✨ AI解析</button>';
+}
+
+// AI解析結果のrelatedKeywordsを使って類似論文を検索する
+// （論文詳細を閉じ、論文検索画面へ移動してキーワードを自動入力し検索を実行する）
+function searchSimilarPapers(paperId){
+  const result = state.aiAnalysisMap[paperId];
+  const keywords = (result && Array.isArray(result.relatedKeywords)) ? result.relatedKeywords : [];
+  if(!keywords.length){
+    showToast('AI解析後に利用できます');
+    return;
+  }
+  const query = keywords.slice(0, 5).join(' ');
+  closeDetail();
+  showPage('search');
+  const input = document.getElementById('search-keyword');
+  if(input){ input.value = query; }
+  runSearch();
 }
 
 // AI解析を実行する（ボタンのonclickから呼ばれるエントリーポイント）
@@ -1860,6 +1948,7 @@ window.importData = importData;
 window.confirmClearAll = confirmClearAll;
 window.closeConfirmDialog = closeConfirmDialog;
 window.requestAIAnalysis = requestAIAnalysis;
+window.searchSimilarPapers = searchSimilarPapers;
 
 })();
 </script>
