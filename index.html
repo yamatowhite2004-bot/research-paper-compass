@@ -676,7 +676,8 @@ let state = {
   currentDetailSource: null, // 'result' | 'favorite'
   aiAnalysisMap: {},      // 論文IDごとのAI解析結果（localStorageと同期）
   aiInFlight: new Set(),  // 現在AI解析リクエスト中の論文ID（二重送信防止）
-  aiErrors: new Set()     // 直近のAI解析が失敗した論文ID
+  aiErrors: new Set(),    // 直近のAI解析が失敗した論文ID
+  relatedPapers: {}       // 論文IDごとの関連論文（OpenAlex由来。永続化せず都度取得）
 };
 
 /* ============================================================
@@ -1667,6 +1668,9 @@ function renderDetail(){
       '<p><strong>OpenAlexトピック:</strong> ' + escapeHTML(topicsText) + '</p>' +
     '</div>' +
 
+    '<h3 class="section-title">関連論文</h3>' +
+    '<div class="card related-papers-block" data-related-paper-id="' + paper.id + '">' + buildRelatedPapersHtml(paper.id) + '</div>' +
+
     '<h3 class="section-title">要旨</h3>' +
     '<div class="card"><p>' + (paper.abstract ? escapeHTML(paper.abstract) : '要旨情報がありません') + '</p></div>' +
 
@@ -1765,6 +1769,117 @@ function toggleReadFromDetail(){
 function openDOI(doi){
   if(!doi){ showToast('この論文にはDOIがありません'); return; }
   window.open('https://doi.org/' + doi, '_blank', 'noopener');
+}
+
+/* ============================================================
+   10b. 関連論文探索（OpenAlexのrelated_worksを利用。AIは一切使用しない）
+   ============================================================ */
+
+// OpenAlexの論文ID（"https://openalex.org/W123..." 等のURL、またはID文字列）から
+// APIで使う短縮ID（例: "W123..."）を取り出す。取得できない場合はnullを返す。
+function extractOpenAlexShortId(idOrUrl){
+  if(!idOrUrl || typeof idOrUrl !== 'string') return null;
+  if(idOrUrl.indexOf('tmp_') === 0) return null; // IDが取得できなかった論文は対象外
+  const parts = idOrUrl.split('/');
+  const last = parts[parts.length - 1];
+  return last || null;
+}
+
+function getRelatedPapersState(paperId){
+  return state.relatedPapers[paperId] || { status: 'idle', papers: [] };
+}
+
+// 関連論文カード（タイトル・著者・発表年・雑誌名・引用数のみ。既存の論文カードとデザインを統一）
+function buildRelatedPaperCard(p){
+  const authorsText = (p.authors && p.authors.length)
+    ? p.authors.slice(0,4).join('、') + (p.authors.length > 4 ? ' 他' : '')
+    : '著者情報なし';
+  return '' +
+    '<div class="paper-card">' +
+      '<div class="paper-title-en">' + escapeHTML(p.title) + '</div>' +
+      '<p class="paper-meta">著者: ' + escapeHTML(authorsText) + '</p>' +
+      '<p class="paper-meta">発表年: ' + (p.year || '不明') + ' ／ 雑誌: ' + escapeHTML(p.journal) + ' ／ 引用数: ' + p.citedBy + '</p>' +
+    '</div>';
+}
+
+// 関連論文ブロックの中身（状態に応じて出し分け）
+function buildRelatedPapersHtml(paperId){
+  const st = getRelatedPapersState(paperId);
+
+  if(st.status === 'loading'){
+    return '<div class="loader"><div class="spinner"></div><span>関連論文を取得しています…</span></div>';
+  }
+
+  if(st.status === 'error'){
+    return '' +
+      '<div class="error-box">関連論文の取得に失敗しました。通信環境を確認して再度お試しください。</div>' +
+      '<button class="btn btn-sm" onclick="loadRelatedPapers(\'' + paperId + '\')">再試行</button>';
+  }
+
+  if(st.status === 'done'){
+    if(!st.papers.length){
+      return '<div class="empty-state"><span class="big">🔗</span>関連論文が見つかりませんでした</div>';
+    }
+    return '<div class="paper-grid">' + st.papers.map(buildRelatedPaperCard).join('') + '</div>' +
+      '<button class="btn btn-sm" style="margin-top:10px;" onclick="loadRelatedPapers(\'' + paperId + '\')">再取得</button>';
+  }
+
+  // idle（未取得）
+  return '<button class="btn btn-block" onclick="loadRelatedPapers(\'' + paperId + '\')">🔗 関連論文を見る</button>';
+}
+
+function refreshRelatedPapersBlock(paperId){
+  document.querySelectorAll('[data-related-paper-id="' + paperId + '"]').forEach(el => {
+    el.innerHTML = buildRelatedPapersHtml(paperId);
+  });
+}
+
+// OpenAlexから関連論文を取得する。
+// 1) 対象論文自体を取得しrelated_works（関連論文のIDリスト）を得る
+// 2) それらのIDをまとめて取得し、5〜10件に整えて返す
+async function fetchRelatedPapersFromOpenAlex(paperId){
+  const shortId = extractOpenAlexShortId(paperId);
+  if(!shortId){
+    throw new Error('この論文の関連論文情報は取得できません');
+  }
+
+  const workRes = await fetch('https://api.openalex.org/works/' + shortId);
+  if(!workRes.ok){
+    throw new Error('OpenAlexから論文情報の取得に失敗しました（ステータス: ' + workRes.status + '）');
+  }
+  const workData = await workRes.json();
+  const relatedRefs = Array.isArray(workData.related_works) ? workData.related_works : [];
+  if(!relatedRefs.length) return [];
+
+  const idsToFetch = relatedRefs.slice(0, 10).map(extractOpenAlexShortId).filter(Boolean);
+  if(!idsToFetch.length) return [];
+
+  const filterUrl = 'https://api.openalex.org/works?filter=openalex_id:' + idsToFetch.join('|') + '&per-page=' + idsToFetch.length;
+  const listRes = await fetch(filterUrl);
+  if(!listRes.ok){
+    throw new Error('関連論文一覧の取得に失敗しました（ステータス: ' + listRes.status + '）');
+  }
+  const listData = await listRes.json();
+  const results = Array.isArray(listData.results) ? listData.results : [];
+  return results.slice(0, 10).map(normalizePaper);
+}
+
+// 「関連論文を見る」ボタンから呼ばれるエントリーポイント
+async function loadRelatedPapers(paperId){
+  const current = getRelatedPapersState(paperId);
+  if(current.status === 'loading') return; // 二重取得防止
+
+  state.relatedPapers[paperId] = { status: 'loading', papers: [] };
+  refreshRelatedPapersBlock(paperId);
+
+  try{
+    const papers = await fetchRelatedPapersFromOpenAlex(paperId);
+    state.relatedPapers[paperId] = { status: 'done', papers: papers };
+  }catch(e){
+    console.error('関連論文取得エラー:', e);
+    state.relatedPapers[paperId] = { status: 'error', papers: [] };
+  }
+  refreshRelatedPapersBlock(paperId);
 }
 
 /* ============================================================
@@ -1949,6 +2064,7 @@ window.confirmClearAll = confirmClearAll;
 window.closeConfirmDialog = closeConfirmDialog;
 window.requestAIAnalysis = requestAIAnalysis;
 window.searchSimilarPapers = searchSimilarPapers;
+window.loadRelatedPapers = loadRelatedPapers;
 
 })();
 </script>
