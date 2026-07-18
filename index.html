@@ -247,6 +247,24 @@ input, select, textarea{ font-family: inherit; font-size: 16px; }
 .ai-result-title{ font-size:.92rem; font-weight:700; margin:0; color: var(--text); }
 .ai-result-row .reason-list{ color: var(--text); }
 
+/* --- 読む順番の提案／クリック可能な関連論文カード（次期バージョン追加） --- */
+.paper-card.clickable{ cursor: pointer; }
+.reading-order-list{ list-style: none; margin:0; padding:0; counter-reset: reading-order; }
+.reading-order-list li{
+  counter-increment: reading-order;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0; position: relative; padding-left: 34px;
+}
+.reading-order-list li:last-child{ border-bottom: none; }
+.reading-order-list li::before{
+  content: counter(reading-order);
+  position:absolute; left:0; top:10px;
+  width:24px; height:24px; border-radius:50%; background: var(--accent); color:#fff;
+  font-size:.75rem; font-weight:800; display:flex; align-items:center; justify-content:center;
+}
+.reading-order-title{ font-weight:700; font-size:.92rem; margin-bottom:2px; }
+.reading-order-reason{ font-size:.78rem; color: var(--text-muted); margin-bottom:6px; }
+
 /* --- ローディング / エラー --- */
 .loader{ display:flex; align-items:center; gap:10px; color: var(--text-muted); padding: 20px 0; justify-content:center; }
 .spinner{ width:22px; height:22px; border-radius:50%; border:3px solid var(--border); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
@@ -371,14 +389,27 @@ input[type="range"]{ width:100%; accent-color: var(--accent); }
       <div class="hint">スペース区切りで複数語を指定できます（OpenAlexの全文検索）</div>
     </div>
 
+    <div class="field">
+      <label for="search-year-filter">年代フィルター</label>
+      <select id="search-year-filter" onchange="handleYearFilterChange()">
+        <option value="none">指定なし</option>
+        <option value="last3">直近3年</option>
+        <option value="last5">直近5年</option>
+        <option value="last10">直近10年</option>
+        <option value="customStart">開始年を指定</option>
+        <option value="customEnd">終了年を指定</option>
+      </select>
+      <div class="hint">下の期間欄と連動します（関連論文・引用論文の取得にも同じ条件が適用されます）</div>
+    </div>
+
     <div class="row">
       <div class="field">
         <label for="search-date-from">期間（開始）</label>
-        <input type="date" id="search-date-from">
+        <input type="date" id="search-date-from" onchange="syncYearFilterState()">
       </div>
       <div class="field">
         <label for="search-date-to">期間（終了）</label>
-        <input type="date" id="search-date-to">
+        <input type="date" id="search-date-to" onchange="syncYearFilterState()">
       </div>
     </div>
 
@@ -415,6 +446,13 @@ input[type="range"]{ width:100%; accent-color: var(--accent); }
   <div class="error-box" id="search-error" style="display:none;"></div>
 
   <div id="search-results" class="paper-grid"></div>
+
+  <h2 class="section-title">📖 おすすめの読む順番</h2>
+  <div class="card">
+    <p class="hint" style="margin:0 0 10px;">検索結果の中から最大10件を対象に、総合点・引用数・総説論文かどうかなどから読む順番を提案します（AIは使用しません）</p>
+    <button class="btn btn-block" onclick="showReadingOrder('search')">おすすめの読む順番を見る</button>
+  </div>
+  <div id="reading-order-search"></div>
 </div>
 
 <!-- ============ お気に入り画面 ============ -->
@@ -439,6 +477,13 @@ input[type="range"]{ width:100%; accent-color: var(--accent); }
   </div>
 
   <div id="favorites-list" class="paper-grid"></div>
+
+  <h2 class="section-title">📖 おすすめの読む順番</h2>
+  <div class="card">
+    <p class="hint" style="margin:0 0 10px;">お気に入りの中から最大10件を対象に、総合点・引用数・総説論文かどうかなどから読む順番を提案します（AIは使用しません）</p>
+    <button class="btn btn-block" onclick="showReadingOrder('favorites')">おすすめの読む順番を見る</button>
+  </div>
+  <div id="reading-order-favorites"></div>
 </div>
 
 <!-- ============ 研究プロフィール画面 ============ -->
@@ -533,7 +578,7 @@ input[type="range"]{ width:100%; accent-color: var(--accent); }
 <!-- ============ 論文詳細オーバーレイ ============ -->
 <div class="overlay" id="detail-overlay">
   <div class="overlay-header">
-    <button class="icon-btn" onclick="closeDetail()" aria-label="閉じる">✕</button>
+    <button class="icon-btn" id="detail-back-btn" onclick="closeDetail()" aria-label="閉じる">✕</button>
     <strong>論文詳細</strong>
   </div>
   <div class="overlay-body" id="detail-body"></div>
@@ -706,6 +751,10 @@ let state = {
   aiInFlight: new Set(),  // 現在AI解析リクエスト中の論文ID（二重送信防止）
   aiErrors: new Set(),    // 直近のAI解析が失敗した論文ID
   relatedPapers: {},      // 論文IDごとの関連論文（OpenAlex由来。永続化せず都度取得）
+  citingPapers: {},       // 論文IDごとの「引用した最新論文」（OpenAlex由来。永続化せず都度取得）
+  ephemeralPapers: {},    // 関連論文・引用論文として取得した論文をIDで引けるようにする一時登録簿（永続化しない）
+  detailHistory: [],      // 論文詳細の閲覧履歴スタック（関連論文・引用論文からの連続探索用。永続化しない）
+  yearFilter: { from: null, to: null }, // 検索画面の年代フィルター（関連論文・引用論文の取得にも共通適用。永続化しない）
   language: 'en',              // EN/JP表示切り替え（デフォルトはEN。リロードごとに初期化される）
   translations: {},            // 翻訳結果キャッシュ（localStorageと同期。キー: "title:ID" 等）
   translationInFlight: new Set(), // 翻訳リクエスト中のキャッシュキー（二重送信防止）
@@ -818,6 +867,17 @@ function normalizePaper(work){
     }
   }catch(e){ topics = []; }
 
+  // オープンアクセス全文へのリンク（PDF優先。次に無料公開ページ）。
+  // 優先順位: best_oa_location→primary_location のPDF URL、次にopen_access.oa_url
+  let pdfUrl = null;
+  let oaLandingUrl = null;
+  try{
+    if(work.best_oa_location && work.best_oa_location.pdf_url){ pdfUrl = work.best_oa_location.pdf_url; }
+    else if(work.primary_location && work.primary_location.pdf_url){ pdfUrl = work.primary_location.pdf_url; }
+    if(work.best_oa_location && work.best_oa_location.landing_page_url){ oaLandingUrl = work.best_oa_location.landing_page_url; }
+    else if(work.open_access && work.open_access.oa_url){ oaLandingUrl = work.open_access.oa_url; }
+  }catch(e){ pdfUrl = pdfUrl || null; oaLandingUrl = oaLandingUrl || null; }
+
   return {
     id: work.id || ('tmp_' + Math.random().toString(36).slice(2)),
     title: work.display_name || work.title || 'タイトル不明',
@@ -829,7 +889,9 @@ function normalizePaper(work){
     isOA: isOA,
     abstract: restoreAbstract(work.abstract_inverted_index),
     keywords: keywords,
-    topics: topics
+    topics: topics,
+    pdfUrl: pdfUrl,
+    oaLandingUrl: oaLandingUrl
   };
 }
 
@@ -1669,7 +1731,37 @@ function findPaperById(id, sourceHint){
     const r = state.lastResults.papers.find(p => p.id === id);
     if(r) return r;
   }
-  return state.favorites.find(p => p.id === id) || null;
+  const fav = state.favorites.find(p => p.id === id);
+  if(fav) return fav;
+  if(state.ephemeralPapers && state.ephemeralPapers[id]) return state.ephemeralPapers[id];
+  return null;
+}
+
+// 論文の重複判定キーを生成する（DOI優先、次にOpenAlex ID、次にタイトル＋年）
+function getPaperDedupKey(p){
+  if(!p) return '';
+  if(p.doi) return 'doi:' + String(p.doi).toLowerCase();
+  if(p.id) return 'id:' + p.id;
+  return 'title:' + String(p.title || '').toLowerCase().trim() + ':' + (p.year || '');
+}
+
+// 論文配列から重複を除去する（DOI→OpenAlex ID→タイトル＋年の順で判定）
+function dedupePapers(papers){
+  const seen = new Set();
+  const result = [];
+  (papers || []).forEach(p => {
+    if(!p) return;
+    const key = getPaperDedupKey(p);
+    if(!seen.has(key)){ seen.add(key); result.push(p); }
+  });
+  return result;
+}
+
+// 関連論文・引用論文として取得した論文を、後からIDで参照できるよう一時登録する（永続化しない）
+function registerEphemeralPapers(papers){
+  (papers || []).forEach(p => {
+    if(p && p.id){ state.ephemeralPapers[p.id] = p; }
+  });
 }
 
 /* ============================================================
@@ -1738,6 +1830,8 @@ async function runSearch(){
     errorBox.style.display = 'block';
     return;
   }
+
+  syncYearFilterState(); // 検索実行時にも共有の年代フィルターへ反映する（関連論文・引用論文の取得で再利用）
 
   const params = {
     keyword: keyword,
@@ -1820,19 +1914,64 @@ function renderFavorites(){
 function openDetailById(paperId, sourceHint){
   const paper = findPaperById(paperId, sourceHint);
   if(!paper){ showToast('論文情報が見つかりませんでした'); return; }
+  state.detailHistory = []; // 通常の一覧から開いた場合は探索履歴をリセットする
   state.currentDetailPaper = paper;
   state.currentDetailSource = isFavorited(paperId) ? 'favorite' : 'result';
   renderDetail();
   document.getElementById('detail-overlay').classList.add('active');
 }
+
+// 関連論文・引用論文カードから論文詳細を開く（連続探索用）。
+// 現在の論文を履歴スタックに積み、何段階でもたどれるようにする。
+// 同じ論文（DOI→OpenAlex ID→タイトル＋年で判定）への遷移は履歴の重複・無限ループを防ぐため、
+// 既に履歴内にあればその位置まで巻き戻す。
+function openDrilldownDetail(paperId){
+  const paper = findPaperById(paperId);
+  if(!paper){ showToast('論文情報が見つかりませんでした'); return; }
+
+  const current = state.currentDetailPaper;
+  if(current && getPaperDedupKey(current) === getPaperDedupKey(paper)){
+    return; // 同じ論文を開こうとした場合は何もしない
+  }
+
+  const dupIndex = state.detailHistory.findIndex(p => getPaperDedupKey(p) === getPaperDedupKey(paper));
+  if(dupIndex !== -1){
+    state.detailHistory = state.detailHistory.slice(0, dupIndex);
+  }else if(current){
+    state.detailHistory.push(current);
+  }
+
+  state.currentDetailPaper = paper;
+  state.currentDetailSource = isFavorited(paperId) ? 'favorite' : 'result';
+  renderDetail();
+  document.getElementById('detail-overlay').classList.add('active');
+}
+
 function closeDetail(){
+  if(state.detailHistory.length > 0){
+    // 関連論文・引用論文からたどってきた場合は、直前の論文詳細へ戻る
+    const prev = state.detailHistory.pop();
+    state.currentDetailPaper = prev;
+    renderDetail();
+    return;
+  }
   document.getElementById('detail-overlay').classList.remove('active');
   state.currentDetailPaper = null;
+  state.detailHistory = [];
 }
 
 function renderDetail(){
   const paper = state.currentDetailPaper;
   if(!paper) return;
+
+  // 関連論文・引用論文からのドリルダウンで開いている場合は「戻る」表示にする
+  const backBtn = document.getElementById('detail-back-btn');
+  if(backBtn){
+    const hasHistory = state.detailHistory.length > 0;
+    backBtn.textContent = hasHistory ? '←' : '✕';
+    backBtn.setAttribute('aria-label', hasHistory ? '前の論文へ戻る' : '閉じる');
+  }
+
   const favData = state.favorites.find(f => f.id === paper.id);
   const isFav = !!favData;
   const memo = favData ? favData.memo : '';
@@ -1845,6 +1984,7 @@ function renderDetail(){
     : 'DOIなし';
   const keywordsText = (paper.keywords && paper.keywords.length) ? paper.keywords.join('、') : 'なし';
   const topicsText = (paper.topics && paper.topics.length) ? paper.topics.join('、') : 'なし';
+  const oaLink = getOpenAccessLink(paper);
 
   // 読むべき理由／実験手法／一致ポイント／難易度（詳細画面では全件表示）
   const analysis = analyzePaper(paper, state.profile);
@@ -1879,6 +2019,9 @@ function renderDetail(){
 
     '<h3 class="section-title">関連論文</h3>' +
     '<div class="card related-papers-block" data-related-paper-id="' + paper.id + '">' + buildRelatedPapersHtml(paper.id) + '</div>' +
+
+    '<h3 class="section-title">この論文を引用した最新論文</h3>' +
+    '<div class="card citing-papers-block" data-citing-paper-id="' + paper.id + '">' + buildCitingPapersHtml(paper.id) + '</div>' +
 
     '<h3 class="section-title">要旨</h3>' +
     '<div class="card"><p>' + (paper.abstract ? escapeHTML(getDisplayAbstract(paper)) : '要旨情報がありません') + '</p></div>' +
@@ -1933,7 +2076,8 @@ function renderDetail(){
       '<button class="btn" onclick="toggleReadFromDetail()" ' + (isFav ? '' : 'disabled') + '>' + (read ? '未読にする' : '既読にする') + '</button>' +
     '</div>' +
     (isFav ? '' : '<p class="hint" style="margin-top:8px;">既読/未読の切り替えはお気に入り登録後に利用できます</p>') +
-    '<button class="btn" style="margin-top:10px;" ' + (paper.doi ? '' : 'disabled') + ' onclick="openDOI(\'' + escapeHTML(paper.doi || '') + '\')">DOIを開く</button>';
+    '<button class="btn" style="margin-top:10px;" ' + (paper.doi ? '' : 'disabled') + ' onclick="openDOI(\'' + escapeHTML(paper.doi || '') + '\')">DOIを開く</button>' +
+    (oaLink ? '<button class="btn btn-primary" style="margin-top:10px;" onclick="openOpenAccessLink(\'' + paper.id + '\')">' + oaLink.label + '</button>' : '');
 }
 
 function saveDetailMemo(){
@@ -1980,6 +2124,23 @@ function openDOI(doi){
   window.open('https://doi.org/' + doi, '_blank', 'noopener');
 }
 
+// オープンアクセス全文へのリンク情報を返す（無ければnull）。
+// 優先順位: 1) PDF直リンク 2) open_access由来の無料公開ページ 3) （それも無ければ表示しない）
+function getOpenAccessLink(paper){
+  if(!paper) return null;
+  if(paper.pdfUrl) return { url: paper.pdfUrl, label: '📄 PDFを開く' };
+  if(paper.oaLandingUrl) return { url: paper.oaLandingUrl, label: '🔓 無料全文を開く' };
+  return null;
+}
+
+function openOpenAccessLink(paperId){
+  const paper = findPaperById(paperId);
+  if(!paper){ showToast('論文情報が見つかりませんでした'); return; }
+  const link = getOpenAccessLink(paper);
+  if(!link){ showToast('無料全文は見つかりませんでした'); return; }
+  window.open(link.url, '_blank', 'noopener');
+}
+
 /* ============================================================
    10b. 関連論文探索（OpenAlexのrelated_worksを利用。AIは一切使用しない）
    ============================================================ */
@@ -1994,17 +2155,26 @@ function extractOpenAlexShortId(idOrUrl){
   return last || null;
 }
 
+// 検索画面の年代フィルターをOpenAlexのfilter句（from/to）として組み立てる（無指定なら空配列）
+function buildYearFilterParts(){
+  const parts = [];
+  if(state.yearFilter && state.yearFilter.from){ parts.push('from_publication_date:' + state.yearFilter.from); }
+  if(state.yearFilter && state.yearFilter.to){ parts.push('to_publication_date:' + state.yearFilter.to); }
+  return parts;
+}
+
 function getRelatedPapersState(paperId){
   return state.relatedPapers[paperId] || { status: 'idle', papers: [] };
 }
 
-// 関連論文カード（タイトル・著者・発表年・雑誌名・引用数のみ。既存の論文カードとデザインを統一）
+// 関連論文カード（タイトル・著者・発表年・雑誌名・引用数のみ。既存の論文カードとデザインを統一）。
+// タップすると通常の論文詳細画面を開き、連続探索できる。
 function buildRelatedPaperCard(p){
   const authorsText = (p.authors && p.authors.length)
     ? p.authors.slice(0,4).join('、') + (p.authors.length > 4 ? ' 他' : '')
     : '著者情報なし';
   return '' +
-    '<div class="paper-card">' +
+    '<div class="paper-card clickable" onclick="openDrilldownDetail(\'' + p.id + '\')" role="button" tabindex="0">' +
       '<div class="paper-title-en">' + escapeHTML(getDisplayTitle(p)) + '</div>' +
       '<p class="paper-meta">著者: ' + escapeHTML(authorsText) + '</p>' +
       '<p class="paper-meta">発表年: ' + (p.year || '不明') + ' ／ 雑誌: ' + escapeHTML(p.journal) + ' ／ 引用数: ' + p.citedBy + '</p>' +
@@ -2045,7 +2215,8 @@ function refreshRelatedPapersBlock(paperId){
 
 // OpenAlexから関連論文を取得する。
 // 1) 対象論文自体を取得しrelated_works（関連論文のIDリスト）を得る
-// 2) それらのIDをまとめて取得し、5〜10件に整えて返す
+// 2) それらのIDをまとめて取得し、5〜10件に整えて返す（検索画面の年代フィルターも適用）
+// 3) 連続探索で論文詳細を開けるよう、既存のスコア計算（computeScore）を適用する
 async function fetchRelatedPapersFromOpenAlex(paperId){
   const shortId = extractOpenAlexShortId(paperId);
   if(!shortId){
@@ -2063,14 +2234,15 @@ async function fetchRelatedPapersFromOpenAlex(paperId){
   const idsToFetch = relatedRefs.slice(0, 10).map(extractOpenAlexShortId).filter(Boolean);
   if(!idsToFetch.length) return [];
 
-  const filterUrl = 'https://api.openalex.org/works?filter=openalex_id:' + idsToFetch.join('|') + '&per-page=' + idsToFetch.length;
+  const filterParts = ['openalex_id:' + idsToFetch.join('|')].concat(buildYearFilterParts());
+  const filterUrl = 'https://api.openalex.org/works?filter=' + filterParts.join(',') + '&per-page=' + idsToFetch.length;
   const listRes = await fetch(filterUrl);
   if(!listRes.ok){
     throw new Error('関連論文一覧の取得に失敗しました（ステータス: ' + listRes.status + '）');
   }
   const listData = await listRes.json();
   const results = Array.isArray(listData.results) ? listData.results : [];
-  return results.slice(0, 10).map(normalizePaper);
+  return scorePapers(dedupePapers(results.slice(0, 10).map(normalizePaper)));
 }
 
 // 「関連論文を見る」ボタンから呼ばれるエントリーポイント
@@ -2084,12 +2256,233 @@ async function loadRelatedPapers(paperId){
   try{
     const papers = await fetchRelatedPapersFromOpenAlex(paperId);
     state.relatedPapers[paperId] = { status: 'done', papers: papers };
+    registerEphemeralPapers(papers); // 連続探索でIDから引けるよう登録
     prefetchTranslations(papers, false); // 関連論文タイトルを一括で事前翻訳する（要旨は表示しないため対象外）
   }catch(e){
     console.error('関連論文取得エラー:', e);
     state.relatedPapers[paperId] = { status: 'error', papers: [] };
   }
   refreshRelatedPapersBlock(paperId);
+}
+
+/* ============================================================
+   10c. この論文を引用した最新論文（次期バージョン追加。OpenAlexのcitesフィルタを使用）
+   ============================================================ */
+
+function getCitingPapersState(paperId){
+  return state.citingPapers[paperId] || { status: 'idle', papers: [] };
+}
+
+// 引用論文カード（英語タイトル・日本語タイトル・著者・出版年・雑誌名・引用数・総合点・OA表示・詳細を開くボタン）
+function buildCitingPaperCard(p){
+  const authorsText = (p.authors && p.authors.length)
+    ? p.authors.slice(0,4).join('、') + (p.authors.length > 4 ? ' 他' : '')
+    : '著者情報なし';
+  const primaryTitle = getDisplayTitle(p); // EN/JP切り替えに追従
+  const secondaryLine = state.language === 'ja'
+    ? '英語タイトル: ' + escapeHTML(p.title)
+    : '日本語タイトル: ' + escapeHTML(getTranslatedDisplayText(p.title, getTranslationCacheKey('title', p.id)));
+  return '' +
+    '<div class="paper-card">' +
+      '<div class="paper-top">' +
+        '<span class="rank-badge rank-' + p.score.rank + '">' + p.score.rank + '</span>' +
+        '<span class="paper-score">総合点 <b>' + p.score.total + '</b> / 100</span>' +
+      '</div>' +
+      '<div class="paper-title-en">' + escapeHTML(primaryTitle) + (p.isOA ? '<span class="oa-badge">オープンアクセス</span>' : '') + '</div>' +
+      '<div class="paper-title-ja">' + secondaryLine + '</div>' +
+      '<p class="paper-meta">著者: ' + escapeHTML(authorsText) + '</p>' +
+      '<p class="paper-meta">発表年: ' + (p.year || '不明') + ' ／ 雑誌: ' + escapeHTML(p.journal) + ' ／ 引用数: ' + p.citedBy + '</p>' +
+      '<button class="btn btn-sm btn-block" style="margin-top:8px;" onclick="openDrilldownDetail(\'' + p.id + '\')">詳細を開く</button>' +
+    '</div>';
+}
+
+function buildCitingPapersHtml(paperId){
+  const st = getCitingPapersState(paperId);
+
+  if(st.status === 'loading'){
+    return '<div class="loader"><div class="spinner"></div><span>引用論文を取得しています…</span></div>';
+  }
+
+  if(st.status === 'error'){
+    return '' +
+      '<div class="error-box">引用論文の取得に失敗しました。通信環境を確認して再度お試しください。</div>' +
+      '<button class="btn btn-sm" onclick="loadCitingPapers(\'' + paperId + '\')">再試行</button>';
+  }
+
+  if(st.status === 'done'){
+    if(!st.papers.length){
+      return '<div class="empty-state"><span class="big">📈</span>この論文を引用した論文は見つかりませんでした</div>';
+    }
+    return '<div class="paper-grid">' + st.papers.map(buildCitingPaperCard).join('') + '</div>' +
+      '<button class="btn btn-sm" style="margin-top:10px;" onclick="loadCitingPapers(\'' + paperId + '\')">再取得</button>';
+  }
+
+  return '<button class="btn btn-block" onclick="loadCitingPapers(\'' + paperId + '\')">📈 この論文を引用した最新論文</button>';
+}
+
+function refreshCitingPapersBlock(paperId){
+  document.querySelectorAll('[data-citing-paper-id="' + paperId + '"]').forEach(el => {
+    el.innerHTML = buildCitingPapersHtml(paperId);
+  });
+}
+
+// OpenAlexのcitesフィルタで、対象論文を引用している論文を新しい順に最大10件取得する
+// （検索画面の年代フィルターも適用）。連続探索用にスコアも計算しておく。
+async function fetchCitingPapers(paperId){
+  const shortId = extractOpenAlexShortId(paperId);
+  if(!shortId){
+    throw new Error('この論文の引用論文情報は取得できません');
+  }
+  const filterParts = ['cites:' + shortId].concat(buildYearFilterParts());
+  const url = 'https://api.openalex.org/works?filter=' + filterParts.join(',') + '&sort=publication_date:desc&per-page=10';
+  const res = await fetch(url);
+  if(!res.ok){
+    throw new Error('引用論文一覧の取得に失敗しました（ステータス: ' + res.status + '）');
+  }
+  const data = await res.json();
+  const results = Array.isArray(data.results) ? data.results : [];
+  return scorePapers(dedupePapers(results.slice(0, 10).map(normalizePaper)));
+}
+
+// 「この論文を引用した最新論文」ボタンから呼ばれるエントリーポイント
+async function loadCitingPapers(paperId){
+  const current = getCitingPapersState(paperId);
+  if(current.status === 'loading') return; // 二重取得防止
+
+  state.citingPapers[paperId] = { status: 'loading', papers: [] };
+  refreshCitingPapersBlock(paperId);
+
+  try{
+    const papers = await fetchCitingPapers(paperId);
+    state.citingPapers[paperId] = { status: 'done', papers: papers };
+    registerEphemeralPapers(papers);
+    prefetchTranslations(papers, false);
+  }catch(e){
+    console.error('引用論文取得エラー:', e);
+    state.citingPapers[paperId] = { status: 'error', papers: [] };
+  }
+  refreshCitingPapersBlock(paperId);
+}
+
+/* ============================================================
+   10d. 年代フィルター（次期バージョン追加。既存の日付入力を活用する）
+   ============================================================ */
+
+// 年代フィルターのプルダウンが変更されたときの処理。
+// 「直近N年」はプリセット期間を既存の日付入力へ自動入力する。
+// 「開始年を指定」「終了年を指定」は既存の日付入力をそのままユーザーに使ってもらう（自動入力しない）。
+function handleYearFilterChange(){
+  const mode = document.getElementById('search-year-filter').value;
+  const fromInput = document.getElementById('search-date-from');
+  const toInput = document.getElementById('search-date-to');
+  const currentYear = new Date().getFullYear();
+
+  if(mode === 'none'){
+    fromInput.value = '';
+    toInput.value = '';
+  }else if(mode === 'last3' || mode === 'last5' || mode === 'last10'){
+    const years = mode === 'last3' ? 3 : (mode === 'last5' ? 5 : 10);
+    fromInput.value = (currentYear - years + 1) + '-01-01';
+    toInput.value = currentYear + '-12-31';
+  }
+  // customStart / customEnd は既存の日付入力欄をそのまま使う（重複UIを増やさない）
+
+  syncYearFilterState();
+}
+
+// 検索画面の日付入力の現在値を、関連論文・引用論文の取得でも使う共有フィルターへ反映する。
+// 保存済みの検索結果・お気に入りデータには一切影響しない。
+function syncYearFilterState(){
+  const fromInput = document.getElementById('search-date-from');
+  const toInput = document.getElementById('search-date-to');
+  state.yearFilter = {
+    from: (fromInput && fromInput.value) ? fromInput.value : null,
+    to: (toInput && toInput.value) ? toInput.value : null
+  };
+}
+
+/* ============================================================
+   10e. 読む順番の自動提案（次期バージョン追加。AIは使用せず既存の総合点等のみを利用）
+   ============================================================ */
+
+function isReviewPaper(p){
+  return /\breview\b/.test((p && p.title || '').toLowerCase());
+}
+
+// 読む順番を決定する。ルール：
+// 1) 総説論文を先に、2) 高被引用の基礎論文を次に（古い順）、
+// 3) それ以外は古い代表論文→新しい発展論文の順（総合点を同年内のタイブレークに使用）。
+// 対象は総合点上位10件まで（重複はDOI→OpenAlex ID→タイトル＋年で除外）。
+function computeReadingOrder(papers){
+  const deduped = dedupePapers((papers || []).filter(p => p && p.score));
+  const pool = deduped.slice().sort((a, b) => b.score.total - a.score.total).slice(0, 10);
+
+  const tierOf = (p) => {
+    if(isReviewPaper(p)) return 0;
+    if((p.citedBy || 0) >= 200) return 1;
+    return 2;
+  };
+
+  const ordered = pool.slice().sort((a, b) => {
+    const ta = tierOf(a), tb = tierOf(b);
+    if(ta !== tb) return ta - tb;
+    if(ta === 0){
+      return (b.citedBy || 0) - (a.citedBy || 0); // 総説は引用数の多い順
+    }
+    if(ta === 1){
+      return (a.year || 9999) - (b.year || 9999); // 基礎論文は古い順（代表論文が先）
+    }
+    const yearDiff = (a.year || 9999) - (b.year || 9999); // 古い代表論文→新しい発展論文
+    if(yearDiff !== 0) return yearDiff;
+    return b.score.total - a.score.total; // 同年なら総合点が高い方を優先
+  });
+
+  return ordered.map((p, idx) => ({ paper: p, order: idx + 1, reason: getReadingOrderReason(p, tierOf(p)) }));
+}
+
+function getReadingOrderReason(p, tier){
+  if(tier === 0) return '分野の全体像を把握できる総説論文';
+  if(tier === 1) return '分野の基礎となる高被引用論文';
+
+  const reasons = (p.score && p.score.reasons) ? p.score.reasons : [];
+  const methodTerms = ['flim','confocal','fluorescence lifetime','fluorescent polymeric thermometer','蛍光','顕微鏡観察'];
+  if(reasons.some(r => methodTerms.includes(String(r).toLowerCase()) || methodTerms.includes(r))){
+    return '測定手法を理解するための論文';
+  }
+  if(reasons.some(r => r === '植物細胞' || String(r).toLowerCase() === 'plant cell' || String(r).toLowerCase() === 'by-2')){
+    return '植物細胞への応用に関する知見';
+  }
+  const currentYear = new Date().getFullYear();
+  if(p.year && (currentYear - p.year) <= 3) return '最新の発展研究';
+  return '研究テーマとの関連が高い論文';
+}
+
+function renderReadingOrder(containerId, items){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  if(!items.length){
+    el.innerHTML = '<div class="empty-state"><span class="big">📖</span>対象の論文がありません</div>';
+    return;
+  }
+  el.innerHTML = '<div class="card"><ol class="reading-order-list">' +
+    items.map(it => (
+      '<li>' +
+        '<div class="reading-order-title">' + escapeHTML(getDisplayTitle(it.paper)) + '</div>' +
+        '<div class="reading-order-reason">' + escapeHTML(it.reason) + '</div>' +
+        '<button class="btn btn-sm" onclick="openDetailById(\'' + it.paper.id + '\', \'' + (isFavorited(it.paper.id) ? 'favorite' : 'result') + '\')">詳細を見る</button>' +
+      '</li>'
+    )).join('') +
+  '</ol></div>';
+}
+
+// 「おすすめの読む順番を見る」ボタンから呼ばれるエントリーポイント（context: 'search' | 'favorites'）
+function showReadingOrder(context){
+  const papers = context === 'search'
+    ? ((state.lastResults && state.lastResults.papers) ? state.lastResults.papers : [])
+    : state.favorites;
+  if(!papers.length){ showToast('対象の論文がありません'); return; }
+  const ordered = computeReadingOrder(papers);
+  renderReadingOrder(context === 'search' ? 'reading-order-search' : 'reading-order-favorites', ordered);
 }
 
 /* ============================================================
@@ -2278,6 +2671,12 @@ window.requestAIAnalysis = requestAIAnalysis;
 window.searchSimilarPapers = searchSimilarPapers;
 window.loadRelatedPapers = loadRelatedPapers;
 window.toggleLanguage = toggleLanguage;
+window.openDrilldownDetail = openDrilldownDetail;
+window.loadCitingPapers = loadCitingPapers;
+window.handleYearFilterChange = handleYearFilterChange;
+window.syncYearFilterState = syncYearFilterState;
+window.showReadingOrder = showReadingOrder;
+window.openOpenAccessLink = openOpenAccessLink;
 
 })();
 </script>
