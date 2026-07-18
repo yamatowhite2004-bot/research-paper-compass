@@ -601,10 +601,10 @@ const LS_KEYS = {
 const AI_WORKER_URL = 'https://research-compass-api.yamatowhite2004.workers.dev';
 const AI_TIMEOUT_MS = 30000;
 
-// EN/JP切り替え機能で使用する無料翻訳API（LibreTranslate互換）のエンドポイント。
-// AI（Gemini/OpenAI等）は使用しない。公開インスタンスが混雑・停止している場合は
-// この1行を別のLibreTranslate互換エンドポイントに差し替えることで対応できる。
-const TRANSLATE_URL = 'https://libretranslate.de/translate';
+// EN/JP切り替え機能で使用する翻訳APIのエンドポイント。
+// v1.5.1: LibreTranslateで翻訳が失敗する事象が続いたため、Google翻訳の無料エンドポイントに置き換え。
+// AI（Gemini/OpenAI等）は使用しない。
+const TRANSLATE_URL = 'https://translate.googleapis.com/translate_a/single';
 const TRANSLATE_TIMEOUT_MS = 15000;
 
 // 研究プロフィールの初期値（ユーザー提供のデフォルト）
@@ -1380,10 +1380,11 @@ async function requestAIAnalysis(paperId){
 }
 
 /* ============================================================
-   4d. EN / JP 表示切り替え（v1.5追加）
-        ・LibreTranslate互換の無料翻訳APIのみを使用し、AI（Gemini/OpenAI等）は使用しない
+   4d. EN / JP 表示切り替え（v1.5追加／v1.5.1でGoogle翻訳に置き換え）
+        ・Google翻訳の無料エンドポイントのみを使用し、AI（Gemini/OpenAI等）は使用しない
         ・論文タイトル／要旨／関連論文タイトルのみを翻訳対象とする
         ・翻訳結果はlocalStorageへ保存し、同じ論文は再翻訳しない
+        ・検索結果・関連論文の取得直後にPromise.all()で一括並列翻訳する
    ============================================================ */
 
 // 翻訳キャッシュのキーを生成する（種別 + 論文ID）。同一論文の再翻訳を防ぐために使用。
@@ -1391,18 +1392,14 @@ function getTranslationCacheKey(kind, paperId){
   return kind + ':' + paperId;
 }
 
-// LibreTranslate互換APIへPOSTし、翻訳結果を取得する（タイムアウト15秒）
+// Google翻訳の無料エンドポイントへGETリクエストを送り、翻訳結果を取得する（タイムアウト15秒）
 async function callTranslateApi(text){
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), TRANSLATE_TIMEOUT_MS);
+  const url = TRANSLATE_URL + '?client=gtx&sl=en&tl=ja&dt=t&q=' + encodeURIComponent(text);
   let res;
   try{
-    res = await fetch(TRANSLATE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: text, source: 'en', target: 'ja', format: 'text' }),
-      signal: controller.signal
-    });
+    res = await fetch(url, { method: 'GET', signal: controller.signal });
   }catch(e){
     clearTimeout(timeoutId);
     throw new Error('翻訳サーバーへの通信に失敗しました');
@@ -1418,10 +1415,21 @@ async function callTranslateApi(text){
   }catch(e){
     throw new Error('翻訳結果の解析に失敗しました');
   }
-  if(!data || typeof data.translatedText !== 'string' || !data.translatedText.trim()){
+  // Google翻訳の応答は [[[訳文, 原文, ...], [訳文, 原文, ...], ...], ...] という入れ子配列形式のため、
+  // 先頭要素の各セグメントから訳文部分だけを取り出して連結する
+  let translated = '';
+  try{
+    const segments = (Array.isArray(data) && Array.isArray(data[0])) ? data[0] : [];
+    translated = segments
+      .map(seg => (Array.isArray(seg) && typeof seg[0] === 'string') ? seg[0] : '')
+      .join('');
+  }catch(e){
+    translated = '';
+  }
+  if(!translated.trim()){
     throw new Error('翻訳結果が不正です');
   }
-  return data.translatedText;
+  return translated;
 }
 
 // 翻訳を実行し、結果をlocalStorageへ保存する。完了後、JP表示中であれば現在の画面を再描画する。
@@ -1444,6 +1452,26 @@ async function requestTranslation(text, cacheKey){
     if(state.language === 'ja'){
       rerenderCurrentView();
     }
+  }
+}
+
+// v1.5.1: 検索結果・関連論文の取得直後に、タイトル（および指定時は要旨）をまとめて
+// 事前翻訳する。Promise.all()で並列実行し、既にキャッシュ済みの論文は再翻訳しない。
+function prefetchTranslations(papers, includeAbstract){
+  if(!Array.isArray(papers) || !papers.length) return;
+  const tasks = [];
+  papers.forEach(p => {
+    if(p && p.title){
+      const titleKey = getTranslationCacheKey('title', p.id);
+      if(!state.translations[titleKey]) tasks.push(requestTranslation(p.title, titleKey));
+    }
+    if(includeAbstract && p && p.abstract){
+      const abstractKey = getTranslationCacheKey('abstract', p.id);
+      if(!state.translations[abstractKey]) tasks.push(requestTranslation(p.abstract, abstractKey));
+    }
+  });
+  if(tasks.length){
+    Promise.all(tasks).catch(e => console.error('一括翻訳中にエラーが発生しました:', e));
   }
 }
 
@@ -1728,6 +1756,7 @@ async function runSearch(){
     const scored = scorePapers(rawPapers);
     state.lastResults = { params: params, papers: scored, timestamp: Date.now() };
     saveJSON(LS_KEYS.lastResults, state.lastResults);
+    prefetchTranslations(scored, true); // 検索結果取得後、タイトル・要旨を一括で事前翻訳する
 
     if(!scored.length){
       resultsEl.innerHTML = '<div class="empty-state"><span class="big">🔍</span>該当する論文が見つかりませんでした。キーワードや条件を変えてお試しください。</div>';
@@ -2055,6 +2084,7 @@ async function loadRelatedPapers(paperId){
   try{
     const papers = await fetchRelatedPapersFromOpenAlex(paperId);
     state.relatedPapers[paperId] = { status: 'done', papers: papers };
+    prefetchTranslations(papers, false); // 関連論文タイトルを一括で事前翻訳する（要旨は表示しないため対象外）
   }catch(e){
     console.error('関連論文取得エラー:', e);
     state.relatedPapers[paperId] = { status: 'error', papers: [] };
