@@ -689,7 +689,24 @@ const DOMAIN_CONCEPTS = [
   { group:'salicylic',    label:'サリチル酸',    ja:['サリチル酸'], en:['salicylic acid'] },
   { group:'aox',          label:'AOX経路',       ja:['aox','交代酸化酵素'], en:['alternative oxidase','aox'] },
   { group:'cccp',         label:'阻害処理',      ja:['cccp','阻害'], en:['cccp','uncoupler','inhibition','inhibitor'] },
-  { group:'bimodal',      label:'二峰性分布',    ja:['二峰性','分布'], en:['bimodal','distribution'] }
+  { group:'bimodal',      label:'二峰性分布',    ja:['二峰性','分布'], en:['bimodal','distribution'] },
+  { group:'animal',       label:'動物',          ja:['動物','マウス','ラット','ヒト由来'], en:['animal','mouse','rat','murine','human-derived'] },
+  { group:'microbe',      label:'微生物',        ja:['微生物','細菌','真菌','ウイルス'], en:['microorganism','bacteria','bacterial','fungus','fungal','virus','viral'] },
+  { group:'disease',      label:'疾患',          ja:['疾患','病気','がん','腫瘍'], en:['disease','cancer','tumor','tumour','pathology'] },
+  { group:'blood',        label:'血液',          ja:['血液','血漿','血清'], en:['blood','plasma','serum'] },
+  { group:'food',         label:'食品',          ja:['食品','食材','発酵'], en:['food','fermentation','fermented'] },
+  { group:'environment',  label:'環境',          ja:['環境','土壌','水質','汚染'], en:['environment','environmental','soil','water quality','pollution'] },
+  { group:'gene',         label:'遺伝子',        ja:['遺伝子','ゲノム','塩基配列'], en:['gene','genomic','genome','sequence'] },
+  { group:'protein',      label:'タンパク質',    ja:['タンパク質','酵素','抗体'], en:['protein','enzyme','antibody'] },
+  { group:'chemistry',    label:'化学',          ja:['化合物','試薬','合成'], en:['compound','reagent','synthesis','chemical'] },
+  { group:'stain',        label:'染色',          ja:['染色','免疫染色'], en:['staining','immunostaining','immunohistochemistry'] },
+  { group:'sequencing',   label:'配列解析',      ja:['シーケンシング','配列決定','rna-seq'], en:['sequencing','rna-seq','transcriptome'] },
+  { group:'chromatography', label:'クロマトグラフィー', ja:['クロマトグラフィー','質量分析'], en:['chromatography','mass spectrometry'] },
+  { group:'expression',   label:'発現解析',      ja:['発現','発現解析'], en:['expression','gene expression'] },
+  { group:'model',        label:'モデル',        ja:['モデル','数理モデル','経路'], en:['model','pathway','mechanism'] },
+  { group:'extraction',   label:'抽出・精製',    ja:['抽出','精製'], en:['extraction','purification'] },
+  { group:'treatment',    label:'処理・治療',    ja:['処理','治療','阻害剤'], en:['treatment','therapy','inhibitor'] },
+  { group:'tissue',       label:'組織',          ja:['組織','器官'], en:['tissue','organ'] }
 ];
 
 // 実験手法タグ検出辞書（AI不使用）。タイトル・要旨・OpenAlexキーワード/トピックの英語表現から検出する。
@@ -724,20 +741,6 @@ const ADVANCED_DIFFICULTY_TERMS = [
   'rna-seq','systems biology','stochastic model','computational model',
   'differential equation','bayesian','regression model','signal transduction pathway'
 ];
-
-// --- v1.5 評価アルゴリズム改善用の定数 ---
-// 「新しい論文」ではなく「自分の研究に直結する論文」を高評価するための固定重要語。
-// 古くても分野の基礎となる論文（例: Okabe et al., 2012の蛍光ポリマー温度計論文）が
-// 不当に低評価にならないよう、テーマ・手法が一致する場合は強めに加点する。
-const CORE_RELEVANCE_TERMS = [
-  'flim', 'fluorescence lifetime', 'fluorescent polymeric thermometer', 'temperature mapping',
-  'intracellular temperature', 'thermometry', 'confocal', 'plant cell', 'by-2'
-];
-// 研究概要との一致（35点）の判定対象を、関連性の高い中核概念に絞ることで、
-// プロフィールに含まれる細部の概念（液胞・サリチル酸等）との不一致による過度な減点を避ける。
-const CORE_OVERVIEW_GROUPS = ['temperature','fluorescence','microscopy','nucleus','cytoplasm','mitochondria','plant'];
-// 実験手法一致（15点）の追加判定語（DOMAIN_CONCEPTSの手法グループに加えて評価する）
-const CORE_METHOD_TERMS = ['flim','confocal','fluorescence lifetime','fluorescent polymeric thermometer'];
 
 let state = {
   currentPage: 'home',
@@ -927,97 +930,158 @@ function splitLines(text){
   return (text || '').split('\n').map(s => s.trim()).filter(Boolean);
 }
 
+// プロフィールの日本語文中に埋め込まれた英数字の技術用語（遺伝子名・細胞株名・略語・化合物名等）を抽出する。
+// 日本語の研究プロフィールと英語の論文本文を、特定分野に依存しない形でつなぐための汎用的な仕組み。
+function extractLatinTerms(text){
+  if(!text) return [];
+  const matches = text.match(/[A-Za-z][A-Za-z0-9\-\/]{1,}/g) || [];
+  const seen = new Set();
+  const result = [];
+  matches.forEach(m => {
+    const t = m.trim();
+    const key = t.toLowerCase();
+    if(t.length >= 2 && !seen.has(key)){ seen.add(key); result.push(t); }
+  });
+  return result;
+}
+
+// 実数配列(rawValues)の合計が整数target と厳密に一致するよう、最大剰余法で丸める。
+// 採点内訳（バー表示）の合計と総合点を完全に一致させるために使用する。
+function distributeRounded(rawValues, target){
+  const floors = rawValues.map(v => Math.floor(Math.max(0, v)));
+  let diff = target - floors.reduce((a, b) => a + b, 0);
+  const result = floors.slice();
+  if(diff > 0){
+    const order = rawValues
+      .map((v, i) => ({ i: i, frac: Math.max(0, v) - floors[i] }))
+      .sort((a, b) => b.frac - a.frac);
+    let k = 0;
+    while(diff > 0 && k < order.length){ result[order[k].i] += 1; diff--; k++; }
+    if(diff > 0){ result[0] += diff; }
+  }else if(diff < 0){
+    const order = rawValues
+      .map((v, i) => ({ i: i, frac: Math.max(0, v) - floors[i] }))
+      .sort((a, b) => a.frac - b.frac);
+    let k = 0;
+    while(diff < 0 && k < order.length){
+      if(result[order[k].i] > 0){ result[order[k].i] -= 1; diff++; }
+      k++;
+    }
+  }
+  return result;
+}
+
+// 採点の「どれだけ一致すれば十分に強い証拠とみなすか」を表す汎用的な飽和しきい値。
+// 特定分野の語を優遇するものではなく、一致数がこの件数に達すればその項目はほぼ満点にする、という
+// 分野に依存しない一般的な基準（研究プロフィール全体を網羅する必要はない）。
+const SATURATION_THEME = 4;
+const SATURATION_SUBJECT = 3;
+const SATURATION_METHOD = 3;
+const SATURATION_CONNECTION = 3;
+const SATURATION_MAJOR_KEYWORD = 3;
+const SATURATION_RELATED_KEYWORD = 4;
+
 function computeScore(paper, profile, settings){
-  const paperText = ((paper.title || '') + ' ' + (paper.abstract || '')).toLowerCase();
-  const profileText = [profile.overview, profile.hypothesis, profile.future, profile.methods].join(' ');
+  const titleAbstract = ((paper.title || '') + ' ' + (paper.abstract || '')).toLowerCase();
+  const tagsPool = ((paper.keywords || []).join(' ') + ' ' + (paper.topics || []).join(' ')).toLowerCase();
+  const fullPool = titleAbstract + ' ' + tagsPool;
 
-  function profileMentions(entry){
-    return entry.ja.some(w => profileText.includes(w));
+  // DOMAIN_CONCEPTSは特定分野の固定スコア項目ではなく、日本語⇔英語の対訳を持つ汎用の
+  // 学術語彙ブリッジとしてのみ利用する（どの項目が使われるかはユーザーのプロフィール次第）。
+  function conceptsMentionedIn(text){
+    return DOMAIN_CONCEPTS.filter(e => e.ja.some(w => text.includes(w)));
   }
-  function paperMentions(entry){
-    return entry.en.some(w => paperText.includes(w.toLowerCase()));
+  function conceptsMatchedIn(concepts, pool){
+    return concepts.filter(e => e.en.some(w => pool.includes(w.toLowerCase())));
   }
 
-  // 1) 研究概要との一致（35点）
-  //    プロフィールが言及するすべての概念ではなく、研究の中核となる概念（温度・蛍光・
-  //    顕微鏡・核・細胞質・ミトコンドリア・植物）に絞って評価する。液胞やサリチル酸など
-  //    細部のテーマとの不一致だけで基礎的に重要な論文が過度に減点されないようにするため。
-  const coreOverviewEntries = DOMAIN_CONCEPTS.filter(e => CORE_OVERVIEW_GROUPS.includes(e.group));
-  const overviewMatchedGroups = coreOverviewEntries.filter(paperMentions);
-  const temperatureEntry = DOMAIN_CONCEPTS.find(e => e.group === 'temperature');
-  const overviewScore = Math.min(35,
-    (overviewMatchedGroups.length / coreOverviewEntries.length) * 35
-    + (paperMentions(temperatureEntry) ? 5 : 0) // 温度計測は研究の中心テーマのため追加加点
-  );
+  // 1) 研究テーマとの一致（30点）：研究概要・現在の仮説 と 論文タイトル・要旨・キーワード・トピック の一致
+  const themeProfileRaw = (profile.overview || '') + ' ' + (profile.hypothesis || '');
+  const themeProfileText = themeProfileRaw.toLowerCase();
+  const themeMentioned = conceptsMentionedIn(themeProfileText);
+  const themeMatched = conceptsMatchedIn(themeMentioned, fullPool);
+  const themeLatin = extractLatinTerms(themeProfileRaw);
+  const themeLatinMatched = themeLatin.filter(t => fullPool.includes(t.toLowerCase()));
+  const themeMatchedSignals = themeMatched.length + themeLatinMatched.length;
+  const themeRaw = 30 * Math.min(1, themeMatchedSignals / SATURATION_THEME);
 
-  // 2) 最重要キーワード一致（25点）：研究プロフィールの最重要キーワードに加え、
-  //    自分の研究に直結する固定重要語（CORE_RELEVANCE_TERMS）を強く加点する
+  // 2) 重要キーワード一致（20点）：最重要キーワード14点＋関連キーワード6点（最重要をより強く評価）
   const majorKeywords = splitLines(profile.majorKeywords);
   const relatedKeywords = splitLines(profile.relatedKeywords);
-  const majorMatched = majorKeywords.filter(k => paperText.includes(k.toLowerCase()));
-  const relatedMatched = relatedKeywords.filter(k => paperText.includes(k.toLowerCase()));
-  const coreTermsMatched = CORE_RELEVANCE_TERMS.filter(t => paperText.includes(t.toLowerCase()));
-  const coreBonusScore = Math.min(18, coreTermsMatched.length * 3 * settings.weightKeyword);
-  const majorRatioScore = majorKeywords.length > 0
-    ? Math.min(7, (majorMatched.length / majorKeywords.length) * 7 * settings.weightKeyword)
-    : 0;
-  const relatedRatioScore = relatedKeywords.length > 0
-    ? Math.min(3, (relatedMatched.length / relatedKeywords.length) * 3 * settings.weightKeyword)
-    : 0;
-  const keywordScore = Math.min(25, coreBonusScore + majorRatioScore + relatedRatioScore);
+  const majorMatched = majorKeywords.filter(k => fullPool.includes(k.toLowerCase()));
+  const relatedMatched = relatedKeywords.filter(k => fullPool.includes(k.toLowerCase()));
+  const majorRatio = Math.min(1, majorMatched.length / SATURATION_MAJOR_KEYWORD);
+  const relatedRatio = Math.min(1, relatedMatched.length / SATURATION_RELATED_KEYWORD);
+  const keywordWeight = Math.min(1.5, Math.max(0.5, settings.weightKeyword));
+  const keywordRaw = Math.min(20, (14 * majorRatio + 6 * relatedRatio) * keywordWeight);
 
-  // 除外キーワード：一致した場合は最終スコアを減点する
+  // 除外キーワード：既存の判定処理を維持（一致した場合は全項目を一律半減する）
   const excludeKeywords = splitLines(profile.excludeKeywords);
-  const excludeMatched = excludeKeywords.filter(k => paperText.includes(k.toLowerCase()));
+  const excludeMatched = excludeKeywords.filter(k => fullPool.includes(k.toLowerCase()));
 
-  // 3) 植物・細胞種一致（10点）：植物細胞（BY-2等）に加え、自分の研究で使用する
-  //    確立された細胞種（HeLa細胞など）との一致も評価する
-  const plantEntry = DOMAIN_CONCEPTS.find(e => e.group === 'plant');
-  let plantScore = 0;
-  if(paperMentions(plantEntry)) plantScore = 10;
-  else if(paperText.includes('hela')) plantScore = 8;
-  else if(paperText.includes('cell')) plantScore = 3;
+  // 3) 実験対象との一致（10点）：使用手法欄に含まれる対象（生物種・細胞種・組織・材料等）と
+  //    論文全体（タイトル・要旨・キーワード・トピック）の一致。「植物細胞」等を固定条件にせず、
+  //    ユーザーのプロフィール（使用している実験手法欄）から動的に判定する。
+  const subjectProfileRaw = profile.methods || '';
+  const subjectProfileText = subjectProfileRaw.toLowerCase();
+  const subjectMentioned = conceptsMentionedIn(subjectProfileText);
+  const subjectMatched = conceptsMatchedIn(subjectMentioned, fullPool);
+  const subjectLatin = extractLatinTerms(subjectProfileRaw);
+  const subjectLatinMatched = subjectLatin.filter(t => fullPool.includes(t.toLowerCase()));
+  const subjectMatchedSignals = subjectMatched.length + subjectLatinMatched.length;
+  const subjectRaw = 10 * Math.min(1, subjectMatchedSignals / SATURATION_SUBJECT);
 
-  // 4) 核・細胞質・温度関連（10点）：細胞内構造に加え、温度計測との関連も評価対象に含める
-  const structureGroupNames = ['nucleus','cytoplasm','organelle','mitochondria','vacuole','temperature'];
-  const structureMatched = DOMAIN_CONCEPTS.filter(e => structureGroupNames.includes(e.group) && paperMentions(e));
-  const organelleScore = Math.min(10, (structureMatched.length / 3) * 10);
+  // 4) 実験手法との一致（15点）：使用手法欄 と 論文タイトル・要旨 の一致。
+  //    特定の手法を固定で優遇せず、ユーザーごとのプロフィールに合わせて判定する。
+  const methodMentioned = subjectMentioned; // 同じ「使用している実験手法」欄を情報源とする
+  const methodMatched = conceptsMatchedIn(methodMentioned, titleAbstract);
+  const methodLatin = subjectLatin;
+  const methodLatinMatched = methodLatin.filter(t => titleAbstract.includes(t.toLowerCase()));
+  const methodMatchedSignals = methodMatched.length + methodLatinMatched.length;
+  const methodRaw = 15 * Math.min(1, methodMatchedSignals / SATURATION_METHOD);
 
-  // 5) 実験手法一致（15点）：蛍光・顕微鏡観察・画像解析に加え、FLIM/confocal等の
-  //    中核的な計測手法語を強く評価する
-  const methodGroupNames = ['fluorescence','microscopy','imageanalysis'];
-  const methodMatched = DOMAIN_CONCEPTS.filter(e => methodGroupNames.includes(e.group) && paperMentions(e));
-  const methodCoreMatched = CORE_METHOD_TERMS.filter(t => paperText.includes(t));
-  const methodScore = Math.min(15, (methodMatched.length / 3) * 9 + methodCoreMatched.length * 3);
+  // 5) 研究課題との接続（10点）：現在の仮説・今後行いたい実験 と 論文全体 の一致
+  const connectionProfileRaw = (profile.hypothesis || '') + ' ' + (profile.future || '');
+  const connectionProfileText = connectionProfileRaw.toLowerCase();
+  const connectionMentioned = conceptsMentionedIn(connectionProfileText);
+  const connectionMatched = conceptsMatchedIn(connectionMentioned, fullPool);
+  const connectionLatin = extractLatinTerms(connectionProfileRaw);
+  const connectionLatinMatched = connectionLatin.filter(t => fullPool.includes(t.toLowerCase()));
+  const connectionMatchedSignals = connectionMatched.length + connectionLatinMatched.length;
+  const connectionRaw = 10 * Math.min(1, connectionMatchedSignals / SATURATION_CONNECTION);
 
-  // 6) 引用数・基礎論文補正（10点）：対数スケールでの評価に加え、非常に高被引用の
-  //    基礎論文は出版年に関係なく高く評価する
+  // 6) 学術的重要性（10点）：引用数（対数評価）＋レビュー論文加点＋基礎論文補正。
+  //    古い論文でも、引用数が多く分野の基礎となる論文は年代に関わらず高く評価する。
   const citations = paper.citedBy || 0;
   const citationLogScore = Math.min(6, (Math.log10(citations + 1) / 3.5) * 6);
-  const foundationalBonus = citations >= 500 ? 4 : citations >= 200 ? 2.5 : citations >= 100 ? 1.5 : 0;
-  const citationScore = Math.min(10, (citationLogScore + foundationalBonus) * settings.weightCitation);
+  const isReview = /\breview\b/.test((paper.title || '').toLowerCase());
+  const reviewBonus = isReview ? 2 : 0;
+  const foundationalBonus = citations >= 500 ? 4 : citations >= 200 ? 2.5 : citations >= 100 ? 1 : 0;
+  const academicUnweighted = Math.min(10, citationLogScore + reviewBonus + foundationalBonus);
+  const academicRaw = Math.min(10, academicUnweighted * Math.min(1.5, Math.max(0.5, settings.weightCitation)));
 
-  // 7) 論文の新しさ（5点）：「古い」というだけで大きく減点しないよう、減衰を緩やかにする
+  // 7) 論文の新しさ（5点）：新しい論文をやや高く評価するが、古いという理由だけで大幅に減点しない
   const currentYear = new Date().getFullYear();
-  const age = paper.year ? Math.max(0, currentYear - paper.year) : 10;
-  const recencyRaw = Math.max(0, 5 - age * 0.12);
-  const recencyScore = Math.min(7.5, recencyRaw * settings.weightRecency);
+  const age = paper.year ? Math.max(0, currentYear - paper.year) : 8;
+  const recencyUnweighted = Math.max(0, 5 - age * 0.15);
+  const recencyRaw = Math.min(5, recencyUnweighted * Math.min(1.5, Math.max(0.5, settings.weightRecency)));
 
-  // 8) 今後の実験への応用（5点）
-  const futureGroupNames = ['salicylic','aox','cccp','cellcycle','vacuole'];
-  const futureMatched = DOMAIN_CONCEPTS.filter(e => futureGroupNames.includes(e.group) && paperMentions(e));
-  const futureScore = Math.min(5, (futureMatched.length / 2) * 5);
+  // 除外キーワードに一致した場合は、既存処理どおり全項目を一律半減する
+  const penalty = excludeMatched.length > 0 ? 0.5 : 1;
+  const rawValues = [
+    themeRaw * penalty,
+    keywordRaw * penalty,
+    subjectRaw * penalty,
+    methodRaw * penalty,
+    connectionRaw * penalty,
+    academicRaw * penalty,
+    recencyRaw * penalty
+  ];
 
-  let total = overviewScore + keywordScore + plantScore + organelleScore
-    + methodScore + citationScore + recencyScore + futureScore;
-
-  // 基礎論文特別加点：非常に高被引用（引用数400件以上）で、かつ自分の研究テーマ・手法に
-  // 直結する語（CORE_RELEVANCE_TERMS）が複数一致する場合、分野の基礎文献として追加加点する
-  const landmarkBonus = (citations >= 400 && coreTermsMatched.length >= 3) ? 5 : 0;
-  total += landmarkBonus;
-
-  if(excludeMatched.length > 0){ total = total * 0.5; }
-  total = Math.max(0, Math.min(100, total));
+  // 内訳の合計＝総合点となるよう、最後に丸め誤差を最大剰余法で補正する（0〜100に制限）
+  const totalRawSum = rawValues.reduce((a, b) => a + b, 0);
+  const total = Math.max(0, Math.min(100, Math.round(totalRawSum)));
+  const rounded = distributeRounded(rawValues, total);
 
   let rank;
   if(total >= 80) rank = 'S';
@@ -1028,23 +1092,23 @@ function computeScore(paper, profile, settings){
   const reasonSet = new Set();
   majorMatched.forEach(k => reasonSet.add(k));
   relatedMatched.forEach(k => reasonSet.add(k));
-  coreTermsMatched.forEach(t => reasonSet.add(t));
-  overviewMatchedGroups.forEach(g => reasonSet.add(g.label));
-  structureMatched.forEach(g => reasonSet.add(g.label));
+  themeMatched.forEach(g => reasonSet.add(g.label));
+  themeLatinMatched.forEach(t => reasonSet.add(t));
+  subjectMatched.forEach(g => reasonSet.add(g.label));
   methodMatched.forEach(g => reasonSet.add(g.label));
+  connectionMatched.forEach(g => reasonSet.add(g.label));
 
   return {
-    total: Math.round(total),
+    total: total,
     rank: rank,
     breakdown: {
-      overview: Math.round(overviewScore * 10) / 10,
-      keyword: Math.round(keywordScore * 10) / 10,
-      plant: Math.round(plantScore * 10) / 10,
-      organelle: Math.round(organelleScore * 10) / 10,
-      recency: Math.round(recencyScore * 10) / 10,
-      method: Math.round(methodScore * 10) / 10,
-      citation: Math.round(citationScore * 10) / 10,
-      future: Math.round(futureScore * 10) / 10
+      theme: rounded[0],
+      keyword: rounded[1],
+      subject: rounded[2],
+      method: rounded[3],
+      connection: rounded[4],
+      academic: rounded[5],
+      recency: rounded[6]
     },
     reasons: Array.from(reasonSet),
     excludeMatched: excludeMatched
@@ -2052,14 +2116,13 @@ function renderDetail(){
 
     '<h3 class="section-title">重要度の採点内訳（総合点 ' + paper.score.total + ' / 100）</h3>' +
     '<div class="card score-bars">' +
-      barRow('研究概要との一致', b.overview, 35) +
-      barRow('最重要キーワード一致', b.keyword, 25) +
-      barRow('植物・細胞種一致', b.plant, 10) +
-      barRow('核・細胞質・温度関連', b.organelle, 10) +
+      barRow('研究テーマとの一致', b.theme, 30) +
+      barRow('重要キーワード一致', b.keyword, 20) +
+      barRow('実験対象との一致', b.subject, 10) +
+      barRow('実験手法との一致', b.method, 15) +
+      barRow('研究課題との接続', b.connection, 10) +
+      barRow('学術的重要性', b.academic, 10) +
       barRow('論文の新しさ', b.recency, 5) +
-      barRow('実験手法一致', b.method, 15) +
-      barRow('引用数・基礎論文補正', b.citation, 10) +
-      barRow('今後の実験への応用', b.future, 5) +
       (paper.score.excludeMatched && paper.score.excludeMatched.length ? '<p style="color:var(--danger); font-size:.82rem; margin-top:8px;">除外キーワードに一致したためスコアが減点されています: ' + escapeHTML(paper.score.excludeMatched.join('、')) + '</p>' : '') +
     '</div>' +
 
